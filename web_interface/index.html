@@ -1,0 +1,1411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Vectoria - A fully browser-native semantic search and RAG system. Upload documents, generate embeddings, cluster, search and chat with your data. Zero backend, 100% client-side.">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta property="og:title" content="Vectoria - Browser-Native Semantic Search & RAG">
+    <meta property="og:description" content="Upload documents, generate embeddings, cluster, search and chat with your data. Everything runs in your browser - no servers, no API keys.">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Vectoria - Browser-Native Semantic Search & RAG">
+    <title>Vectoria</title>
+
+    <script>
+        // Immediately apply dark mode class from localStorage to prevent FOUC
+        (function() {
+            try {
+                const storedTheme = localStorage.getItem('vectoria_theme_preference');
+                if (storedTheme === 'dark' || storedTheme === null) { // Default to dark if no preference set
+                    document.documentElement.classList.add('dark');
+                    document.documentElement.setAttribute('data-theme', 'dark'); // For CSS variables
+                } else {
+                    document.documentElement.classList.add('light');
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            } catch (e) {
+                console.warn('Failed to read theme from localStorage:', e);
+                // Fallback to default dark
+                document.documentElement.classList.add('dark');
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
+
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="preconnect" href="https://esm.run" crossorigin>
+    <link rel="dns-prefetch" href="https://huggingface.co">
+
+    <link rel="stylesheet" href="static/css/main.css?v=20250914n">
+    <link rel="stylesheet" href="static/css/browser-ml.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.14.0/plotly.min.js" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js" crossorigin="anonymous" defer></script>
+
+    <link rel="icon" type="image/svg+xml" href="static/img/favicon.svg">
+    <link rel="apple-touch-icon" href="static/img/favicon.svg">
+</head>
+<body class="">
+    <div id="filter-notification-banner" class="filter-notification-banner">
+        <span id="filter-notification-text">Filters applied</span>
+    </div>
+    
+    <header>
+        <div class="container header-content">
+            <div class="logo">
+                <img src="static/img/logo.svg" alt="Vectoria Logo" data-logo-light="static/img/logo-dark.svg" data-logo-dark="static/img/logo.svg">
+                <h1>VECTORIA</h1>
+            </div>
+            <div class="header-actions">
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div id="upload-tab" class="tab-content active" style="display: block;">
+            <div class="card">
+                <div class="card-header">
+                    <h2>1. Upload your data file</h2>
+                    <p style="margin: 0.5rem 0 0 0; color: var(--text-secondary); font-size: 0.80rem;"><strong>Browser-first text exploration, clustering and semantic search.</strong> Upload your data file and explore semantic clusters with AI-powered search.</p>
+                </div>
+                <div class="card-body">
+                    <form id="csv-upload-form" enctype="multipart/form-data">
+                        <div id="model-setup-panel" class="model-setup-panel">
+                            <div class="model-setup-panel-text">
+                                <strong>Set up AI models</strong>
+                                <p>Download the embeddings model & Large Language Model (LLM) once to enable uploads and search. You control when it starts.</p>
+                            </div>
+                            <button type="button" id="start-model-setup-btn" class="btn btn-primary">
+                                Start setup
+                            </button>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Select a file:</label>
+                            <div class="custom-file-input-wrapper">
+                                <input type="file" id="csv-file" name="file" accept=".csv,.xlsx,.xls,.json,.txt" class="custom-file-input" disabled>
+                                <button type="button" id="custom-file-btn" class="btn btn-file-select" disabled>
+                                    <i class="fas fa-folder-open"></i> Choose file
+                                </button>
+                                <span id="custom-file-name" class="custom-file-name">No file selected</span>
+                            </div>
+                            <small class="form-help">Supported formats: CSV, Excel, JSON, TXT</small>
+                        </div>
+                        <button type="submit" id="upload-btn" class="btn btn-primary" disabled>
+                            <span id="upload-btn-text">Upload</span>
+                        </button>
+                        <small class="form-help" id="model-loading-status" style="display: block; margin-top: 10px; color: var(--text-secondary);">
+                            Download the AI models to enable uploads (first time can take a few minutes).
+                        </small>
+                    </form>
+
+                    <div class="form-group" style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-color);">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">
+                            <i class="fas fa-bolt"></i> Skip processing - load saved dataset
+                        </label>
+                        <input type="file" id="import-dataset-file" accept=".vectoria.json,.json" style="display: none;">
+                        <button id="import-dataset-btn" class="btn btn-secondary" style="margin-right: 12px;">
+                            <i class="fas fa-upload"></i> Load dataset
+                        </button>
+                        <small class="form-help" style="display: block; margin-top: 8px;">
+                            Load complete datasets. Uses <code>.vectoria.json</code> format.
+                        </small>
+                    </div>
+                    <div class="form-group" style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-color);">
+                        <button type="button" id="open-advanced-settings" class="btn btn-secondary">
+                            <i class="fas fa-cog"></i> Advanced settings
+                        </button>
+                        <small class="form-help">Configure models, RAG parameters, clustering, and visualization settings</small>
+                    </div>
+                    <div id="upload-error" class="alert alert-danger" style="display: none;"></div>
+                    <div id="upload-success" class="alert alert-success" style="display: none;"></div>
+                    <div id="upload-loader" class="loader" style="display: none;"></div>
+                </div>
+            </div>
+
+            <div id="column-selection" class="card" style="display: none;">
+                <div class="card-header">
+                    <h2>2. Select text column & process</h2>
+                </div>
+                <div class="card-body">
+                    <div class="form-group column-select-group">
+                        <label for="text-column-select" class="column-select-label">Text column</label>
+                        <select id="text-column-select" class="form-control column-select">
+                            <option value="">Select a column...</option>
+                        </select>
+                    </div>
+
+                    <div class="process-controls">
+                        <button id="process-csv-btn" class="btn btn-primary" disabled>Process data</button>
+                        <div id="processing-loader" class="loader" style="display: none;"></div>
+                    </div>
+                    <div id="processing-error" class="alert alert-danger" style="display: none;"></div>
+                    <div id="processing-success" class="alert alert-success" style="display: none;"></div>
+
+                    <div id="sample-data-container" class="sample-data" style="margin-top: 20px; display: none;">
+                        <h3>Sample data preview</h3>
+                        <hr>
+                        <div id="sample-data-table" class="sample-table"></div>
+                        <div style="margin-top: 16px; padding: 12px 14px; background: var(--bg-secondary, #f8f9fa); border-radius: 8px; display: flex; align-items: flex-start; gap: 10px; font-size: 0.82rem; color: var(--text-secondary);">
+                            <i class="fas fa-info-circle" style="margin-top: 2px; color: var(--primary-color, #6366f1); flex-shrink: 0;"></i>
+                            <span>Every dataset is unique. For best results, explore <b>Advanced Settings</b> to fine-tune the processing to your data's specific structure.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="explore-tab" class="tab-content" style="display: none;">
+            <div class="search-section-compact">
+                <div class="search-input-group">
+                    <input type="text" id="search-input" placeholder="Search your data..." 
+                           class="search-input form-control">
+                    <button id="search-btn" class="btn btn-primary">
+                        <i class="fas fa-search"></i>
+                        Search
+                    </button>
+                </div>
+
+                <div class="search-options-compact">
+                    <div class="option-group">
+                        <select id="search-type" class="form-control">
+                            <option value="fast" selected>Keyword search</option>
+                            <option value="semantic">Semantic search</option>
+                            <option value="rag">Ask AI (RAG)</option>
+                        </select>
+                    </div>
+                    <div class="option-group" id="result-count-group" style="display: none;">
+                        <select id="result-count" class="form-control">
+                            <option value="5" selected>5 results</option>
+                            <option value="10">10 results</option>
+                            <option value="20">20 results</option>
+                            <option value="50">50 results</option>
+                        </select>
+                    </div>
+                    <div class="option-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="highlight-results" checked>
+                            <span class="checkbox-custom"></span>
+                            Highlight
+                        </label>
+                    </div>
+                </div>
+
+                <div id="rag-mode-ui" class="rag-mode-ui" style="display: none;">
+                    <div class="rag-info-banner">
+                        <div class="rag-info-content">
+                            <div class="rag-info-icon">
+                                <i class="fas fa-robot"></i>
+                            </div>
+                            <div class="rag-info-text">
+                                <strong>AI Assistant Active</strong>
+                                <p id="rag-scope-text">Analyzing your entire dataset</p>
+                            </div>
+                        </div>
+                        <button type="button" id="rag-settings-btn" class="btn btn-sm btn-outline-primary" title="Configure AI settings">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
+                        </button>
+                        <div id="rag-metadata-context" class="rag-metadata-context" style="display:none;">
+                            <div class="rag-metadata-context-label">
+                                <span>Context metadata:</span>
+                            </div>
+                            <div id="rag-metadata-chips" class="rag-metadata-chips">
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Hidden backing elements read by performSearch() -->
+                    <input type="checkbox" id="rag-include-metadata" style="display:none">
+                    <select id="rag-metadata-fields" multiple style="display:none"></select>
+
+                </div>
+
+                <div id="rag-answer-card" class="rag-answer-card" style="display: none;">
+                    <div class="ai-answer-container">
+                        <div class="ai-answer-header">
+                            <div class="ai-answer-title">
+                                <i class="fas fa-robot"></i>
+                                <span>AI Answer</span>
+                                <button id="stop-generation-btn" class="stop-generation-btn" style="display: none;" title="Stop generation">
+                                    <i class="fas fa-stop"></i>
+                                </button>
+                                <button id="hyde-viewer-btn" class="hyde-viewer-icon" style="display: none;" title="View HyDE hypothetical answer">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <span id="rag-answer-meta" class="ai-answer-meta"></span>
+                            </div>
+                        </div>
+                        <div class="ai-answer-body">
+                            <div id="rag-answer-text" class="ai-answer-text"></div>
+                            <p id="rag-context-warning" class="rag-context-warning" style="display: none;"></p>
+                            <p id="rag-disclaimer" class="rag-disclaimer">Disclaimer: AI-generated answer is based on retrieved documents. It may contain errors. <span id="rag-duration" class="rag-duration"></span></p>
+                        </div>
+                    </div>
+
+                    <div id="hyde-modal" class="modal" style="display: none;">
+                        <div class="modal-content" style="max-width: 700px;">
+                            <div class="modal-header">
+                                <h3><i class="fas fa-magic"></i> HyDE Hypothetical Answer</h3>
+                                <button class="modal-close" onclick="document.getElementById('hyde-modal').style.display='none'">&times;</button>
+                            </div>
+                            <div class="modal-body">
+                                <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                                    This is the hypothetical answer generated by HyDE before retrieval:
+                                </p>
+                                <div id="hyde-answer-content" style="background: var(--input-bg); padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); white-space: pre-wrap; font-size: 14px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="button" id="toggle-hyde-mode" style="display: none;"></button>
+                <span id="hyde-mode-indicator" style="display: none;"></span>
+
+                <div id="filter-status-bar" class="filter-status-bar" style="display: none;">
+                    <div class="filter-status-left">
+                        <i class="fas fa-filter"></i>
+                        <span id="filter-status-text">Filters active</span>
+                        <span id="filter-status-count" class="filter-count-badge">0</span>
+                        <div id="filter-status-list" class="filter-status-list"></div>
+                    </div>
+                    <div class="filter-status-right">
+                        <button id="clear-active-filters" class="btn btn-sm btn-outline">
+                            <i class="fas fa-times-circle"></i> Clear Filters
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="search-results" class="search-results-compact" style="display: none;">
+                    <div class="results-header">
+                        <span id="results-count" class="results-count">0 results</span>
+                        <button id="clear-search" class="btn btn-sm btn-outline">Clear</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="visualization-text-container">
+                <div class="main-viz-text-container">
+                    <div class="viz-column">
+                        <div class="card fullheight-card">
+                            <div class="card-body visualization-wrapper">
+                                <div class="visualization-container" id="main-viz-container">
+                                    <div id="loader" class="loader"></div>
+                                    <div id="visualization-error" class="alert alert-danger" style="display: none;"></div>
+                                    <div id="no-data-message" class="alert alert-info" style="display: none;">
+                                        No data available for visualization. Please upload and process a file first.
+                                    </div>
+                                    <canvas id="viz-canvas"></canvas>
+                                    <div id="tooltip" class="tooltip"></div>
+                                </div>
+                                <div class="viz-controls-panel">
+                                    <button id="zoom-in-btn" class="viz-control-btn">
+                                        <i class="fas fa-search-plus"></i>
+                                    </button>
+                                    <button id="zoom-out-btn" class="viz-control-btn">
+                                        <i class="fas fa-search-minus"></i>
+                                    </button>
+                                    <button id="reset-view-btn" class="viz-control-btn">
+                                        <i class="fas fa-home"></i>
+                                    </button>
+                                    <button id="fullscreen-btn" class="viz-control-btn">
+                                        <i class="fas fa-expand"></i>
+                                    </button>
+                                    <button id="toggle-labels-btn" class="viz-control-btn">
+                                        <i class="fas fa-font"></i>
+                                    </button>
+                                    <button id="lasso-select-btn" class="viz-control-btn">
+                                        <i class="fas fa-draw-polygon"></i>
+                                    </button>
+                                    <button id="screenshot-btn" class="viz-control-btn">
+                                        <i class="fas fa-camera"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="filters-panel-container">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h2>Filters</h2>
+                                </div>
+                                <div class="card-body">
+                                    <div id="metadata-filters-section" class="metadata-filters-section">
+                                        <div id="metadata-filters-grid" class="metadata-filter-grid">
+                                        </div>
+                                        <div class="metadata-filter-actions">
+                                            <button id="apply-metadata-filters" class="apply-filters-btn">Apply Filters</button>
+                                            <button id="clear-metadata-filters" class="clear-filters-btn">Clear All</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="text-column">
+                        <div class="card fullheight-card">
+                            <div class="card-header">
+                                <h2>Text Content <span id="text-content-count" class="text-count">(0)</span></h2>
+                            </div>
+                            <div class="card-body">
+                                <div id="text-display-container" class="text-display-container">
+                                    <div id="text-list" class="text-list scrollable-list">
+                                    </div>
+                                    <div id="selected-text-view" class="selected-text-view" style="display: none;">
+                                        <button id="back-to-list-btn" class="btn btn-sm back-to-list-btn">
+                                            <i class="fas fa-arrow-left"></i> Back to List
+                                        </button>
+                                        <div id="selected-text-content" class="selected-text-content">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="text-content-footer">
+                                <button id="export-selection-btn" class="btn btn-secondary btn-sm" disabled title="Export full dataset" style="display:none;">
+                                    <i class="fas fa-download"></i> Export data
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <div id="advanced-settings-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Advanced Settings</h2>
+                <button type="button" class="modal-close" id="close-advanced-settings">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-categories">
+                    <div class="settings-nav">
+                        <button class="settings-nav-btn active" data-category="llm">
+                            <span class="settings-nav-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" role="presentation">
+                                    <rect x="3.5" y="5" width="8" height="14" rx="1.4"></rect>
+                                    <rect x="12.5" y="5" width="8" height="14" rx="1.4"></rect>
+                                    <line x1="7" y1="8" x2="9.5" y2="8"></line>
+                                    <line x1="16" y1="8" x2="18.5" y2="8"></line>
+                                </svg>
+                            </span>
+                            <span class="settings-nav-label">Language Model</span>
+                        </button>
+                        <button class="settings-nav-btn" data-category="embeddings">
+                            <span class="settings-nav-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" role="presentation">
+                                    <circle cx="6" cy="12" r="2.2"></circle>
+                                    <circle cx="12" cy="6" r="2.2"></circle>
+                                    <circle cx="18" cy="12" r="2.2"></circle>
+                                    <circle cx="12" cy="18" r="2.2"></circle>
+                                    <line x1="7.8" y1="10.3" x2="10.3" y2="7.8"></line>
+                                    <line x1="13.7" y1="7.8" x2="16.2" y2="10.3"></line>
+                                    <line x1="7.8" y1="13.7" x2="10.3" y2="16.2"></line>
+                                    <line x1="13.7" y1="16.2" x2="16.2" y2="13.7"></line>
+                                </svg>
+                            </span>
+                            <span class="settings-nav-label">Embeddings</span>
+                        </button>
+                        <button class="settings-nav-btn" data-category="clustering">
+                            <span class="settings-nav-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" role="presentation">
+                                    <circle cx="9" cy="9" r="3.4"></circle>
+                                    <circle cx="15" cy="9" r="3.4"></circle>
+                                    <circle cx="12" cy="15" r="3.4"></circle>
+                                </svg>
+                            </span>
+                            <span class="settings-nav-label">Clustering</span>
+                        </button>
+                        <button class="settings-nav-btn" data-category="chunking">
+                            <span class="settings-nav-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" role="presentation">
+                                    <rect x="4" y="4" width="6" height="6" rx="1"></rect>
+                                    <rect x="14" y="4" width="6" height="6" rx="1"></rect>
+                                    <rect x="4" y="14" width="6" height="6" rx="1"></rect>
+                                    <rect x="14" y="14" width="6" height="6" rx="1"></rect>
+                                </svg>
+                            </span>
+                            <span class="settings-nav-label">Chunking</span>
+                        </button>
+                        <button class="settings-nav-btn" data-category="about">
+                            <span class="settings-nav-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" role="presentation">
+                                    <circle cx="12" cy="12" r="9"></circle>
+                                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                                    <circle cx="12" cy="8.5" r="0.8" fill="currentColor"></circle>
+                                </svg>
+                            </span>
+                            <span class="settings-nav-label">About & Credits</span>
+                        </button>
+                    </div>
+                    
+                    <div class="settings-category active" data-category="llm">
+                        <h3>Language Model</h3>
+
+                        <div class="form-group">
+                            <label for="llm-model-id">Model: <span title="Page reload required">⚠️</span></label>
+                            <select id="llm-model-id" class="form-control">
+                                <optgroup label="Google">
+                                    <option value="gemma-2-2b-it-q4f32_1-MLC" selected>Gemma 2 2B (8K context)</option>
+                                    <option value="gemma-2-9b-it-q4f32_1-MLC">Gemma 2 9B (8K context)</option>
+                                </optgroup>
+                                <optgroup label="Meta">
+                                    <option value="Llama-3.2-3B-Instruct-q4f32_1-MLC">Llama 3.2 3B (8K context)</option>
+                                    <option value="Llama-3.2-1B-Instruct-q4f32_1-MLC">Llama 3.2 1B (8K context)</option>
+                                </optgroup>
+                                <optgroup label="Qwen">
+                                    <option value="Qwen3-0.6B-q4f32_1-MLC">Qwen 3 0.6B (32K context) · Reasoning/Thinking</option>
+                                    <option value="Qwen3-1.7B-q4f32_1-MLC">Qwen 3 1.7B (32K context) · Reasoning/Thinking</option>
+                                    <option value="Qwen3-4B-q4f32_1-MLC">Qwen 3 4B (32K context) · Reasoning/Thinking</option>
+                                    <option value="Qwen3-8B-q4f32_1-MLC">Qwen 3 8B (32K context) · Reasoning/Thinking</option>
+                                </optgroup>
+                                <optgroup label="Microsoft">
+                                    <option value="Phi-3.5-mini-instruct-q4f32_1-MLC">Phi 3.5 Mini (4K context)</option>
+                                </optgroup>
+                                <optgroup label="HuggingFace">
+                                    <option value="SmolLM2-1.7B-Instruct-q4f32_1-MLC">SmolLM2 1.7B (8K context)</option>
+                                </optgroup>
+                                <optgroup label="DeepSeek">
+                                    <option value="DeepSeek-R1-Distill-Qwen-7B-q4f32_1-MLC">DeepSeek R1 Qwen 7B (32K context) · Reasoning/Thinking</option>
+                                    <option value="DeepSeek-R1-Distill-Llama-8B-q4f32_1-MLC">DeepSeek R1 Llama 8B (8K context) · Reasoning/Thinking</option>
+                                </optgroup>
+                            </select>
+                            <small class="form-help">Reload required. Models cached after download.</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="context-window-size">Context Window: <span title="Page reload required">⚠️</span></label>
+                            <select id="context-window-size" class="form-control">
+                                <option value="2048" selected>2K tokens</option>
+                                <option value="4096">4K tokens</option>
+                                <option value="8192">8K tokens</option>
+                                <option value="16384">16K tokens</option>
+                                <option value="32768">32K tokens</option>
+                            </select>
+                        </div>
+
+                        <h4>Generation</h4>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="temperature">Temperature:</label>
+                                <input type="range" id="temperature" min="0" max="1.5" step="0.1" value="0.5">
+                                <span class="range-value">0.5</span>
+                            </div>
+                            <div class="form-group">
+                                <label for="max-tokens">Max Tokens:</label>
+                                <input type="number" id="max-tokens" value="768" min="100" max="32768" step="128">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="top-p">Top P:</label>
+                                <input type="range" id="top-p" min="0.5" max="1" step="0.05" value="0.9">
+                                <span class="range-value">0.9</span>
+                            </div>
+                            <div class="form-group">
+                                <label for="repeat-penalty">Repeat Penalty:</label>
+                                <input type="range" id="repeat-penalty" min="1" max="1.5" step="0.05" value="1.15">
+                                <span class="range-value">1.15</span>
+                            </div>
+                        </div>
+
+                        <h4>Storage & Cache</h4>
+                        <div class="form-group">
+                            <div id="storage-info" class="storage-panel" style="display: none;">
+                                <div class="storage-bar-container">
+                                    <div class="storage-bar">
+                                        <div id="storage-bar-fill" class="storage-bar-fill"></div>
+                                    </div>
+                                    <div class="storage-bar-labels">
+                                        <span id="storage-used-label">0 GB used</span>
+                                        <span id="storage-available-label">0 GB available</span>
+                                    </div>
+                                </div>
+                                <div id="storage-details" class="storage-details"></div>
+                            </div>
+                            <div class="storage-actions">
+                                <button type="button" id="check-storage-btn" class="btn btn-secondary">
+                                    <i class="fas fa-database"></i> Check Storage
+                                </button>
+                                <button type="button" id="clear-model-cache-btn" class="btn btn-danger">
+                                    <i class="fas fa-trash-alt"></i> Reset and clear all data
+                                </button>
+                            </div>
+                            <small class="form-help" style="margin-top: 0.5rem; display: block;">Clears all stored data, models, and settings. The page will reload fresh.</small>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-category" data-category="embeddings">
+                        <h3>Embeddings</h3>
+                        <div class="info-box" style="padding: 0.5rem; border-radius: 4px; margin-bottom: 0.75rem;">
+                            <small><strong>multilingual-e5-small</strong> · 384D · 100+ languages</small>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="embedding-batch-size">Batch Size:</label>
+                                <input type="number" id="embedding-batch-size" min="1" max="64" step="1" placeholder="Auto">
+                            </div>
+                            <div class="form-group">
+                                <label for="embedding-max-length">Max Tokens:</label>
+                                <input type="number" id="embedding-max-length" value="256" min="128" max="512" step="64">
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="embedding-tokens-per-batch">Token Budget (Advanced):</label>
+                            <input type="number" id="embedding-tokens-per-batch" placeholder="Auto" min="512" max="8192" step="512">
+                        </div>
+                    </div>
+
+                    <div class="settings-category" data-category="chunking">
+                        <h3>Chunking</h3>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="chunking-enabled" checked>
+                                Enable Document Chunking
+                            </label>
+                            <small class="form-help">Splits documents into smaller pieces for precise RAG retrieval. Disable to keep documents whole (dynamic chunking at query time).</small>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="chunk-size">Chunk Size:</label>
+                                <input type="number" id="chunk-size" value="512" min="256" max="1024" step="64">
+                                <small class="form-help">Characters per chunk (~128 tokens at 512 chars)</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="chunk-overlap">Overlap:</label>
+                                <input type="number" id="chunk-overlap" value="128" min="0" max="256" step="32">
+                            </div>
+                            <div class="form-group">
+                                <label for="min-chunk-size">Min Size:</label>
+                                <input type="number" id="min-chunk-size" value="50" min="20" max="200" step="10">
+                            </div>
+                        </div>
+                        <small class="form-help" style="display:block; margin-top: 0.5rem; color: #888;">Tip: Match chunk size to embedding max tokens. 512 chars ≈ 128 tokens fits within 256 max_length.</small>
+                        <small class="form-help" style="display:block; margin-top: 0.75rem; color: var(--text-muted); font-style: italic;">Uses recursive character text splitting for intelligent document chunking.</small>
+                    </div>
+
+                    <div class="settings-category" data-category="clustering">
+                        <h3>Clustering</h3>
+
+                        <h4>UMAP</h4>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="umap-n-neighbors">N Neighbors:</label>
+                                <input type="number" id="umap-n-neighbors" value="15" min="5" max="50" step="1">
+                            </div>
+                            <div class="form-group">
+                                <label for="umap-min-dist">Min Distance:</label>
+                                <input type="number" id="umap-min-dist" value="0" min="0" max="0.5" step="0.05">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="umap-metric">Metric:</label>
+                                <select id="umap-metric" class="form-control">
+                                    <option value="cosine" selected>Cosine</option>
+                                    <option value="euclidean">Euclidean</option>
+                                    <option value="manhattan">Manhattan</option>
+                                    <option value="chebyshev">Chebyshev</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="umap-clustering-dimensions">Clustering Dims:</label>
+                                <input type="number" id="umap-clustering-dimensions" value="15" min="2" max="100" step="1">
+                            </div>
+                        </div>
+                        <small class="form-help" style="display: block; margin-top: -8px; margin-bottom: 16px;">Clustering Dims: Intermediate dimensions before 2D viz (default: 15)</small>
+
+                        <h4>HDBSCAN</h4>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="hdbscan-min-cluster-size">Min Cluster:</label>
+                                <input type="number" id="hdbscan-min-cluster-size" value="5" min="3" max="50" step="1">
+                            </div>
+                            <div class="form-group">
+                                <label for="hdbscan-min-samples">Min Samples:</label>
+                                <input type="number" id="hdbscan-min-samples" value="5" min="1" max="50" step="1">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="hdbscan-metric">Metric:</label>
+                            <select id="hdbscan-metric" class="form-control">
+                                <option value="euclidean" selected>Euclidean</option>
+                                <option value="manhattan">Manhattan</option>
+                                <option value="chebyshev">Chebyshev</option>
+                                <option value="minkowski">Minkowski</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-category" data-category="about">
+                        <h3>About Vectoria</h3>
+
+                        <div class="form-group" style="margin-bottom: 1.25rem;">
+                            <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
+                                <span>Dark Mode</span>
+                                <button id="theme-toggle" type="button" class="theme-toggle-setting-btn" aria-label="Toggle dark mode">
+                                    <span class="theme-toggle-track">
+                                        <span class="theme-toggle-thumb"></span>
+                                    </span>
+                                </button>
+                            </label>
+                        </div>
+
+                        <p style="color: var(--text-secondary); margin-bottom: 1rem; line-height: 1.6;">
+                            A fully browser-native semantic search and RAG system. All processing happens locally in your browser - your data never leaves your device.
+                        </p>
+
+                        <h4>Core Technologies</h4>
+                        <div class="about-tech-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 1rem;">
+                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
+                                <small><strong>WebLLM</strong> - LLM inference</small>
+                            </div>
+                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
+                                <small><strong>Transformers.js</strong> - Embeddings</small>
+                            </div>
+                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
+                                <small><strong>ONNX Runtime</strong> - ML runtime</small>
+                            </div>
+                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
+                                <small><strong>WebGPU</strong> - GPU acceleration</small>
+                            </div>
+                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
+                                <small><strong>UMAP-js</strong> - Dimensionality reduction</small>
+                            </div>
+                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
+                                <small><strong>HDBSCAN</strong> - Clustering</small>
+                            </div>
+                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
+                                <small><strong>BM25</strong> - Keyword search</small>
+                            </div>
+                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
+                                <small><strong>IndexedDB</strong> - Local storage</small>
+                            </div>
+                        </div>
+
+                        <div class="info-box" style="padding: 0.75rem; border-radius: 4px; text-align: center;">
+                            <small style="color: var(--text-muted);">
+                                No telemetry · No tracking · Models cached locally
+                            </small>
+                        </div>
+
+                        <div style="text-align: center; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                            <p style="margin: 0 0 0.5rem 0; color: var(--text-secondary); font-size: 0.9rem;">
+                                Created by <strong>Armin Pasalic</strong>
+                            </p>
+                            <div style="display: flex; justify-content: center; gap: 1rem;">
+                                <a href="https://arminpasalic.com" target="_blank" rel="noopener noreferrer" style="color: var(--accent-neutral); text-decoration: none; font-size: 0.85rem;">
+                                    arminpasalic.com
+                                </a>
+                                <a href="https://github.com/arminpasalic/vectoria" target="_blank" rel="noopener noreferrer" style="color: var(--accent-neutral); text-decoration: none; font-size: 0.85rem;">
+                                    GitHub
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-actions">
+                        <button id="save-settings-btn" class="btn btn-primary">Save</button>
+                        <button id="reset-settings-btn" class="btn btn-secondary">Reset all settings to default</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    </main>
+
+    <div id="quick-settings-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 580px; width: 90%; max-height: 90vh; overflow-y: auto;">
+            <div class="quick-settings-header">
+                <h3><i class="fas fa-sliders-h"></i> RAG Search Settings</h3>
+                <button type="button" id="close-quick-settings" class="btn-icon" title="Close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div class="qs-tabs">
+                <button type="button" class="settings-tab active" data-tab="rag-tab">
+                    <i class="fas fa-robot"></i> RAG
+                </button>
+                <button type="button" class="settings-tab" data-tab="hyde-tab">
+                    <i class="fas fa-lightbulb"></i> HyDE
+                </button>
+            </div>
+
+            <div class="quick-settings-body">
+                <div id="rag-tab" class="settings-tab-content">
+
+                    <!-- HyDE Toggle -->
+                    <div class="setting-row" style="flex-direction: row; align-items: center; justify-content: space-between;">
+                        <label class="rag-toggle-label rag-settings-toggle" style="flex: 1; margin: 0;">
+                            <input type="checkbox" id="hyde-mode-toggle" class="rag-toggle-input">
+                            <span class="rag-toggle-slider"></span>
+                            <span class="rag-toggle-text">
+                                <i class="fas fa-lightbulb"></i> HyDE Mode
+                                <small>Hypothetical answer before search</small>
+                            </span>
+                        </label>
+                        <span class="setting-help" title="Generates a hypothetical answer first, then searches using that answer instead of the raw query. Finds documents even when your wording differs from the source.">?</span>
+                    </div>
+
+                    <!-- Retrieval section -->
+                    <div class="qs-section-label">Retrieval</div>
+
+                    <div class="setting-row">
+                        <label for="quick-retrieval-k">
+                            <span><i class="fas fa-layer-group"></i> Depth (K)</span>
+                            <span class="qs-right"><span class="setting-value" id="quick-retrieval-k-value">60</span><span class="setting-help" title="How many chunks to gather before ranking. Higher = deeper but slower. Scoped to your active filters/lasso.">?</span></span>
+                        </label>
+                        <input type="range" id="quick-retrieval-k" min="10" max="200" step="5" value="60" class="slider">
+                    </div>
+
+                    <div class="setting-row">
+                        <label for="quick-vector-weight">
+                            <span><i class="fas fa-balance-scale"></i> Vector / BM25</span>
+                            <span class="qs-right"><span class="setting-value" id="quick-weight-value">60 / 40</span><span class="setting-help" title="Balance between semantic (vector) and keyword (BM25) search. 100/0 = pure semantic, 0/100 = pure keyword.">?</span></span>
+                        </label>
+                        <input type="range" id="quick-vector-weight" min="0" max="100" step="5" value="60" class="slider">
+                    </div>
+
+                    <!-- Generation section -->
+                    <div class="qs-section-label">Generation</div>
+
+                    <div class="setting-row">
+                        <label for="quick-temperature">
+                            <span><i class="fas fa-thermometer-half"></i> Temperature</span>
+                            <span class="qs-right"><span class="setting-value" id="quick-temperature-value">0.5</span><span class="setting-help" title="Controls randomness. 0 = deterministic, 0.5 = balanced, 1.5 = very creative.">?</span></span>
+                        </label>
+                        <input type="range" id="quick-temperature" min="0" max="1.5" step="0.1" value="0.5" class="slider">
+                    </div>
+
+                    <div class="setting-row">
+                        <label for="quick-max-tokens">
+                            <span><i class="fas fa-font"></i> Max Tokens</span>
+                            <span class="qs-right"><span class="setting-value" id="quick-max-tokens-value">768</span><span class="setting-help" title="Maximum response length. Reasoning/thinking models automatically get 3x for their internal reasoning.">?</span></span>
+                        </label>
+                        <input type="range" id="quick-max-tokens" min="128" max="8192" step="128" value="768" class="slider">
+                    </div>
+
+                    <!-- Top P + Repeat Penalty on one row, smaller -->
+                    <div class="qs-compact-row">
+                        <div class="qs-compact-item">
+                            <label for="quick-top-p">
+                                <span>Top P</span>
+                                <span class="qs-right"><span class="setting-value" id="quick-top-p-value">0.9</span><span class="setting-help" title="Nucleus sampling. Only tokens within the top P probability mass are considered. Lower = more focused.">?</span></span>
+                            </label>
+                            <input type="range" id="quick-top-p" min="0.1" max="1.0" step="0.05" value="0.9" class="slider">
+                        </div>
+                        <div class="qs-compact-item">
+                            <label for="quick-repeat-penalty">
+                                <span>Repeat Penalty</span>
+                                <span class="qs-right"><span class="setting-value" id="quick-repeat-penalty-value">1.15</span><span class="setting-help" title="Penalizes repeated tokens. 1.0 = no penalty, higher = less repetition.">?</span></span>
+                            </label>
+                            <input type="range" id="quick-repeat-penalty" min="1.0" max="2.0" step="0.05" value="1.15" class="slider">
+                        </div>
+                    </div>
+
+                    <!-- Prompts section -->
+                    <div class="qs-section-label">Prompts</div>
+
+                    <div class="setting-row">
+                        <label for="quick-system-prompt">
+                            <span><i class="fas fa-comment-dots"></i> System Prompt</span>
+                            <span class="setting-help" title="Instructions for how the AI should behave. Leave empty for default. Add /nothink to disable reasoning on thinking models.">?</span>
+                        </label>
+                        <textarea id="quick-system-prompt" class="form-control prompt-textarea" rows="2" placeholder="You are a helpful assistant answering questions based on provided documents.&#10;Use [Doc N] to cite sources. If information is missing, say so."></textarea>
+                        <small id="think-mode-hint" class="form-help" style="margin-top: 4px; display: none; color: var(--accent-primary);">This model uses reasoning/thinking. Add <code>/nothink</code> to the system prompt to disable it.</small>
+                    </div>
+
+                    <div class="setting-row">
+                        <label for="quick-user-template">
+                            <span><i class="fas fa-file-alt"></i> User Template</span>
+                            <span class="setting-help" title="Template for each query. Use {question} and {context} as placeholders.">?</span>
+                        </label>
+                        <textarea id="quick-user-template" class="form-control prompt-textarea" rows="2" placeholder="Question: {question}&#10;&#10;Documents:&#10;{context}&#10;&#10;Answer based on the documents above:"></textarea>
+                    </div>
+                </div>
+
+                <div id="hyde-tab" class="settings-tab-content" style="display: none;">
+                    <div class="setting-row">
+                        <label for="hyde-temperature">
+                            <span><i class="fas fa-thermometer-half"></i> Temperature</span>
+                            <span class="qs-right"><span class="setting-value" id="hyde-temperature-value">0.2</span><span class="setting-help" title="Creativity for hypothetical answer generation. Lower = more focused.">?</span></span>
+                        </label>
+                        <input type="range" id="hyde-temperature" min="0" max="1.5" step="0.1" value="0.2" class="slider">
+                    </div>
+
+                    <div class="setting-row">
+                        <label for="hyde-max-tokens">
+                            <span><i class="fas fa-font"></i> Max Tokens</span>
+                            <span class="qs-right"><span class="setting-value" id="hyde-max-tokens-value">256</span><span class="setting-help" title="Maximum length of the hypothetical answer (64-1024).">?</span></span>
+                        </label>
+                        <input type="range" id="hyde-max-tokens" min="64" max="1024" step="64" value="256" class="slider">
+                    </div>
+
+                    <div class="setting-row">
+                        <label for="hyde-prompt">
+                            <span><i class="fas fa-magic"></i> HyDE Prompt</span>
+                            <span class="setting-help" title="Instruction prepended before the user's question to generate the hypothetical answer.">?</span>
+                        </label>
+                        <textarea id="hyde-prompt" class="form-control prompt-textarea" rows="2" placeholder="Write a detailed passage that answers this question:"></textarea>
+                    </div>
+                </div>
+
+                <div class="quick-settings-actions">
+                    <button type="button" id="reset-quick-settings" class="btn btn-secondary btn-sm">
+                        <i class="fas fa-undo"></i> Reset
+                    </button>
+                    <button type="button" id="apply-quick-settings" class="btn btn-primary btn-sm">
+                        <i class="fas fa-check"></i> Apply & Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="hyde-review-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 900px; width: 95%; resize: both; overflow: auto;">
+            <div class="quick-settings-header">
+                <h3><i class="fas fa-lightbulb"></i> HyDE - Review Generated Hypothesis</h3>
+                <button type="button" id="close-hyde-modal" class="btn-icon" title="Cancel">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="quick-settings-body">
+                <div style="background: rgba(62, 125, 78, 0.1); padding: 12px; border-radius: 8px; margin-bottom: 16px; border-left: 3px solid #3E7D4E;">
+                    <p style="margin: 0; font-size: 13px; color: var(--text-secondary);">
+                        <strong>HyDE Mode:</strong> The LLM generated a hypothetical answer to your question.
+                        You can review and edit it below before using it to search for relevant documents.
+                    </p>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label style="font-weight: 600; font-size: 13px; color: var(--text-secondary); display: block; margin-bottom: 6px;">
+                        <i class="fas fa-question-circle"></i> Your Original Question:
+                    </label>
+                    <div id="hyde-original-query" style="padding: 10px; background: var(--surface-subtle); border-radius: 6px; font-size: 14px; color: var(--text-primary);"></div>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label for="hyde-generated-text" style="font-weight: 600; font-size: 13px; color: var(--text-secondary); display: block; margin-bottom: 6px;">
+                        <i class="fas fa-magic"></i> Generated Hypothetical Answer:
+                    </label>
+                    <textarea
+                        id="hyde-generated-text"
+                        class="form-control"
+                        rows="8"
+                        style="font-size: 14px; resize: both; min-height: 150px; max-height: 500px;"
+                        placeholder="Generating hypothesis..."></textarea>
+                    <small style="color: var(--text-muted); font-size: 12px; display: block; margin-top: 6px;">
+                        💡 Tip: Edit this text to better match what you're looking for, then search.
+                    </small>
+                </div>
+
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button type="button" id="hyde-cancel" class="btn btn-secondary btn-sm">
+                        <i class="fas fa-times"></i> Cancel
+                    </button>
+                    <button type="button" id="hyde-search" class="btn btn-primary btn-sm">
+                        <i class="fas fa-search"></i> Search with This Text
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="processing-summary-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Processing Summary</h2>
+                <button type="button" class="modal-close" id="close-processing-summary">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="processing-summary-content">
+                </div>
+                <div style="margin-top: 16px; display: flex; gap: 12px; justify-content: flex-end;">
+                    <button id="continue-to-explore" class="btn btn-primary">
+                        Continue to Explore
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="model-setup-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-container model-setup-modal">
+            <div class="modal-header" style="border-bottom: none; padding-bottom: 0; justify-content: flex-end;">
+                <button type="button" class="modal-close" id="close-model-setup">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="model-setup-brand">
+                    <img src="static/img/logo.svg" alt="Vectoria" class="model-setup-logo" data-logo-light="static/img/logo-dark.svg" data-logo-dark="static/img/logo.svg">
+                    <div class="model-setup-brand-text">
+                        <strong>Vectoria</strong>
+                        <span>Browser-first text exploration, clustering and semantic search</span>
+                    </div>
+                </div>
+                <p class="model-setup-intro model-setup-intro-lead" style="color: #fff;">Welcome to Vectoria. Upload text-rich data, explore it visually, search by meaning, and ask questions answered by a local AI model.</p>
+                <p class="model-setup-intro" style="color: rgba(255,255,255,0.55); font-size: 0.88em; line-height: 1.6; margin-top: 0.25em;">
+                    CSV, Excel, JSON &amp; TXT with text columns &nbsp;&middot;&nbsp; Automatic clustering &amp; 2D visualization &nbsp;&middot;&nbsp; Semantic exploration and search &nbsp;&middot;&nbsp; AI-generated answers using your data
+                </p>
+                <p class="model-setup-intro" style="color: rgba(255,255,255,0.38); font-size: 0.82em; margin-top: 0.5em;">
+                    <i class="fas fa-lock" style="margin-right: 4px;"></i>100% Private &amp; Open-Source — All processing is on your computer. Your data never leaves your device.
+                </p>
+                <p class="model-setup-intro" style="color: rgba(255,255,255,0.38); font-size: 0.82em; margin-top: 0.2em;">
+                    <i class="fas fa-desktop" style="margin-right: 4px;"></i>Chrome/Edge, WebGPU, 16 GB RAM recommended
+                </p>
+                <p class="model-setup-intro model-setup-intro-lead">To get started, two AI models will be downloaded for local use (one-time setup). All processing is on your computer:</p>
+                <div class="model-setup-steps">
+                    <div class="model-setup-step">
+                        <div class="model-setup-step-title">1. Embeddings model</div>
+                        <div class="model-setup-step-desc">Powers semantic clustering and visualization.</div>
+                        <div class="model-setup-step-desc" style="font-size: 0.85em; color: var(--text-muted);">Converts text into numerical vectors so similar content can be grouped and searched by meaning.</div>
+                        <div class="model-setup-step-meta">Model: <span id="model-setup-embedding-name">intfloat/multilingual-e5-small</span></div>
+                    </div>
+                    <div class="model-setup-step">
+                        <div class="model-setup-step-title">2. Large Language Model</div>
+                        <div class="model-setup-step-desc">Enables Retrieval-Augmented Generation (RAG) for your data.</div>
+                        <div class="model-setup-step-desc" style="font-size: 0.85em; color: var(--text-muted);">Generates natural language answers to your questions using relevant documents as context.</div>
+                        <div class="model-setup-step-meta">Model: <span id="model-setup-llm-name">gemma-2-2b-it-q4f32_1-MLC</span></div>
+                    </div>
+                </div>
+                <div class="model-setup-actions">
+                    <button type="button" id="model-setup-start-btn" class="btn btn-primary">Start setup</button>
+                    <button type="button" id="model-setup-later-btn" class="btn btn-secondary">Not now</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="model-change-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-container" style="max-width: 480px;">
+            <div class="modal-header">
+                <h3>Change Language Model</h3>
+                <button type="button" class="modal-close" id="model-change-cancel-x">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <p style="margin: 0 0 0.75rem 0;">Switch to <strong id="model-change-name"></strong>?</p>
+                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.9em;">
+                    <i class="fas fa-download"></i> <span id="model-change-size-label">Download size:</span> <strong id="model-change-size"></strong>
+                </p>
+                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.85em;">
+                    <i class="fas fa-sync-alt"></i> The page will reload to initialize the new model.
+                </p>
+                <p style="margin: 0; color: var(--text-muted); font-size: 0.85em;">
+                    <i class="fas fa-database"></i> Models are cached after first download.
+                </p>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-color);">
+                <button type="button" class="btn btn-secondary" id="model-change-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="model-change-confirm">Download &amp; Reload</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="context-window-change-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-container" style="max-width: 480px;">
+            <div class="modal-header">
+                <h3>Change Context Window</h3>
+                <button type="button" class="modal-close" id="context-window-cancel-x">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <p style="margin: 0 0 0.75rem 0;">Change context window to <strong id="context-window-new-size"></strong> tokens?</p>
+                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.85em;">
+                    <i class="fas fa-sync-alt"></i> The page will reload to reinitialize the language model with the new context size.
+                </p>
+                <p style="margin: 0; color: var(--text-muted); font-size: 0.85em;">
+                    <i class="fas fa-info-circle"></i> Larger context windows use more memory but allow longer answers and more RAG context.
+                </p>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-color);">
+                <button type="button" class="btn btn-secondary" id="context-window-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="context-window-confirm">Apply &amp; Reload</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="reset-settings-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-container" style="max-width: 480px;">
+            <div class="modal-header">
+                <h3>Reset All Settings to Default</h3>
+                <button type="button" class="modal-close" id="reset-settings-cancel-x">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <p style="margin: 0 0 0.75rem 0;">Reset all settings back to their default values?</p>
+                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.85em;">
+                    <i class="fas fa-undo"></i> This will reset: LLM, Embeddings, Chunking, Prompts, RAG, and Clustering settings.
+                </p>
+                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.85em;">
+                    <i class="fas fa-sync-alt"></i> The page will reload to apply default settings.
+                </p>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-color);">
+                <button type="button" class="btn btn-secondary" id="reset-settings-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="reset-settings-confirm">Reset &amp; Reload</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="reset-all-data-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-container" style="max-width: 480px;">
+            <div class="modal-header">
+                <h3>Reset and Clear All Data</h3>
+                <button type="button" class="modal-close" id="reset-all-data-cancel-x">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <p style="margin: 0 0 0.75rem 0; color: var(--danger-color); font-weight: 600;">
+                    <i class="fas fa-exclamation-triangle"></i> This action cannot be undone.
+                </p>
+                <p style="margin: 0 0 0.75rem 0;">This will permanently delete everything:</p>
+                <ul style="margin: 0 0 0.75rem 1rem; color: var(--text-muted); font-size: 0.85em; list-style: disc;">
+                    <li>All uploaded documents &amp; embeddings</li>
+                    <li>All cached language models</li>
+                    <li>All settings and preferences</li>
+                </ul>
+                <p style="margin: 0; color: var(--text-muted); font-size: 0.85em;">
+                    <i class="fas fa-sync-alt"></i> The page will reload fresh as if visiting for the first time.
+                </p>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-color);">
+                <button type="button" class="btn btn-secondary" id="reset-all-data-cancel">Cancel</button>
+                <button type="button" class="btn btn-danger" id="reset-all-data-confirm">Delete Everything &amp; Reload</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="cluster-rename-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-container" style="max-width: 480px;">
+            <div class="modal-header">
+                <h3>Rename Cluster</h3>
+                <button type="button" class="modal-close" id="cluster-rename-cancel-x">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <p style="margin: 0 0 1rem 0; color: var(--text-muted); font-size: 0.9em;">
+                    <i class="fas fa-tag"></i> Default: <strong id="cluster-rename-default"></strong>
+                </p>
+                <input type="text" id="cluster-rename-input"
+                    placeholder="Enter new cluster name..."
+                    style="width: 100%; padding: 0.6rem 0.75rem; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); border-radius: var(--radius-md); color: var(--text-color); font-size: 0.95em; outline: none; box-sizing: border-box;"
+                />
+                <p style="margin: 0.75rem 0 0 0; color: var(--text-muted); font-size: 0.8em;">
+                    Leave empty to reset to default name.
+                </p>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-color);">
+                <button type="button" class="btn btn-secondary" id="cluster-rename-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="cluster-rename-confirm">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 VECTORIA | Made with <span style="color: #ff1493;">♥</span> by Armin Pasalic</p>
+        </div>
+    </footer>
+
+    <script>
+        // Store reference to browser ML pipeline (will be set by browser-integration.js)
+        window.browserMLReady = new Promise((resolve) => {
+            window.resolveBrowserML = resolve;
+        });
+        
+        // Store original fetch
+        const originalFetch = window.fetch;
+        
+        // Minimal fetch interceptor that queues API calls until browser ML is ready
+        window.fetch = async function(url, options = {}) {
+            // Extract path from URL
+            let urlPath = url;
+            if (typeof url === 'string') {
+                try {
+                    const urlObj = new URL(url, window.location.href);
+                    urlPath = urlObj.pathname;
+                } catch (e) {
+                    urlPath = url;
+                }
+            }
+            
+            // If it's an API call, wait for browser ML to be ready and use its handler
+            if (typeof urlPath === 'string' && (
+                urlPath.includes('/api/') ||
+                urlPath.includes('/query') ||
+                urlPath.includes('/search') ||
+                urlPath.includes('/metadata_schema') ||
+                urlPath.includes('/visualization_data') ||
+                urlPath.includes('/config')
+            )) {
+                // Wait for browser ML integration to be ready (with timeout)
+                try {
+                    const timeout = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Timeout waiting for browser ML')), 30000)
+                    );
+                    await Promise.race([window.browserMLReady, timeout]);
+                } catch (error) {
+                    console.error('❌ Timeout or error waiting for browser ML:', error);
+                    return new Response(JSON.stringify({ error: error.message }), {
+                        status: 500,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+                
+                // Use the browser ML fetch handler
+                if (window.browserMLFetch) {
+                    return window.browserMLFetch(url, options);
+                } else {
+                    console.error('❌ Browser ML fetch handler not available');
+                    return new Response(JSON.stringify({ error: 'Browser ML not initialized' }), {
+                        status: 500,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+            }
+            
+            // For non-API calls, use original fetch
+            return originalFetch(url, options);
+        };
+        
+    </script>
+
+    <script type="module" src="static/js/config-manager.js"></script>
+    <script type="module" src="static/js/model-constraints.js"></script>
+    <script src="static/js/viz.js"></script>
+    <script src="static/js/webgl-renderer.js"></script>
+    <script src="static/js/hyde-handler.js"></script>
+    <script src="static/js/fast-search.js?v=20250914l"></script>
+    <script src="static/js/search-enhancement.js"></script>
+
+    <script src="static/js/browser-capabilities.js"></script>
+
+    <script type="module">
+        await import('./static/js/browser-integration.js');
+    </script>
+
+    <script type="module">
+        import { initializeBrowserML, setupDatasetSaveLoadHandlers, setupStopGenerationHandler } from './static/js/browser-integration.js';
+
+        // Initialize on page load
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                // Run browser capability check first
+                if (typeof initCapabilityCheck === 'function') {
+                    const capabilities = await initCapabilityCheck();
+
+                    // If core features aren't supported, show error and stop
+                    if (!capabilities.webassembly.supported) {
+                        const errorMsg = 'Your browser does not support WebAssembly which is required for Vectoria. Please use a modern browser (Chrome, Firefox, Safari, or Edge).';
+                        console.error('❌ ' + errorMsg);
+                        alert(errorMsg);
+                        return;
+                    }
+
+                    // Warn about mobile but continue
+                    if (capabilities.isMobile.isMobile) {
+                        console.warn('⚠️ Mobile device detected. Performance may be limited.');
+                    }
+
+                    // Warn about missing WebGPU but continue (embeddings still work)
+                    if (!capabilities.webgpu.supported) {
+                        console.warn('⚠️ WebGPU not available. AI answers (RAG) will be disabled.');
+                    }
+                }
+
+                // Clean up any previously registered service workers
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.getRegistrations()
+                        .then(regs => regs.forEach(reg => reg.unregister()));
+                }
+
+                const MODEL_PROMPT_KEY = 'vectoria_models_prompted';
+                const MODEL_READY_KEY = 'vectoria_models_ready';
+                let modelInitStarted = false;
+
+                const modelSetupPanel = document.getElementById('model-setup-panel');
+                const modelSetupModal = document.getElementById('model-setup-modal');
+                const modelSetupStartBtn = document.getElementById('model-setup-start-btn');
+                const modelSetupLaterBtn = document.getElementById('model-setup-later-btn');
+                const modelSetupPanelBtn = document.getElementById('start-model-setup-btn');
+                const modelSetupCloseBtn = document.getElementById('close-model-setup');
+                const uploadBtnText = document.getElementById('upload-btn-text');
+                const modelLoadingStatus = document.getElementById('model-loading-status');
+                const modelSetupTitle = modelSetupPanel ? modelSetupPanel.querySelector('strong') : null;
+                const modelSetupDesc = modelSetupPanel ? modelSetupPanel.querySelector('p') : null;
+
+                const setModelSetupUIState = (state, options = {}) => {
+                    const { hidePanel = false } = options;
+                    if (state === 'ready') {
+                        if (modelSetupPanel) {
+                            modelSetupPanel.style.display = 'none';
+                        }
+                        if (modelLoadingStatus) {
+                            modelLoadingStatus.style.display = 'none';
+                        }
+                        return;
+                    }
+
+                    if (modelSetupPanel) {
+                        modelSetupPanel.style.display = hidePanel ? 'none' : '';
+                    }
+
+                    if (uploadBtnText) {
+                        uploadBtnText.textContent = 'Upload';
+                    }
+
+                    if (modelLoadingStatus) {
+                        modelLoadingStatus.style.display = 'block';
+                        if (state === 'installed') {
+                            modelLoadingStatus.textContent = 'AI models are installed. Click Start setup to load them.';
+                        } else {
+                            modelLoadingStatus.textContent = 'Download the AI models to enable uploads (first time can take a few minutes).';
+                        }
+                    }
+
+                    if (modelSetupTitle && modelSetupDesc) {
+                        if (state === 'installed') {
+                            modelSetupTitle.textContent = 'AI models installed';
+                            modelSetupDesc.textContent = 'Click Start setup to load them into the browser.';
+                        } else {
+                            modelSetupTitle.textContent = 'Set up AI models';
+                            modelSetupDesc.textContent = 'Download the embeddings + LLM once to enable uploads and search. You control when it starts.';
+                        }
+                    }
+
+                    if (modelSetupPanelBtn && !modelInitStarted) {
+                        modelSetupPanelBtn.disabled = false;
+                        modelSetupPanelBtn.textContent = state === 'installed' ? 'Load models' : 'Start setup';
+                    }
+                };
+
+                const startModelInitialization = async () => {
+                    if (modelInitStarted) return;
+                    modelInitStarted = true;
+                    if (modelSetupModal) {
+                        modelSetupModal.style.display = 'none';
+                    }
+                    if (modelSetupPanelBtn) {
+                        modelSetupPanelBtn.disabled = true;
+                        modelSetupPanelBtn.textContent = 'Starting...';
+                    }
+                    if (modelSetupStartBtn) {
+                        modelSetupStartBtn.disabled = true;
+                        modelSetupStartBtn.textContent = 'Starting...';
+                    }
+
+                    try {
+                        await initializeBrowserML();
+                        try { localStorage.setItem(MODEL_READY_KEY, 'true'); } catch (_) {}
+                        setModelSetupUIState('ready');
+                        setupDatasetSaveLoadHandlers();
+                        setupStopGenerationHandler();
+                    } catch (error) {
+                        modelInitStarted = false;
+                        if (modelSetupPanelBtn) {
+                            modelSetupPanelBtn.disabled = false;
+                            modelSetupPanelBtn.textContent = 'Start setup';
+                        }
+                        if (modelSetupStartBtn) {
+                            modelSetupStartBtn.disabled = false;
+                            modelSetupStartBtn.textContent = 'Start setup';
+                        }
+                        if (modelLoadingStatus) {
+                            modelLoadingStatus.textContent = 'Model setup failed. Please try again.';
+                        }
+                    }
+                };
+
+                const handleStartClick = () => {
+                    try { localStorage.setItem(MODEL_PROMPT_KEY, 'true'); } catch (_) {}
+                    startModelInitialization();
+                };
+
+                if (modelSetupStartBtn) {
+                    modelSetupStartBtn.addEventListener('click', handleStartClick);
+                }
+
+                if (modelSetupPanelBtn) {
+                    modelSetupPanelBtn.addEventListener('click', handleStartClick);
+                }
+
+                if (modelSetupLaterBtn) {
+                    modelSetupLaterBtn.addEventListener('click', () => {
+                        // Try to close the tab/window
+                        window.close();
+                        // Fallback: if window.close() doesn't work (e.g., not opened by script),
+                        // navigate to a blank page or show a message
+                        setTimeout(() => {
+                            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#666;"><p>You can close this tab now.</p></div>';
+                        }, 100);
+                    });
+                }
+
+                if (modelSetupCloseBtn) {
+                    modelSetupCloseBtn.addEventListener('click', () => {
+                        // Try to close the tab/window (same as "Not now")
+                        window.close();
+                        // Fallback: if window.close() doesn't work (e.g., not opened by script),
+                        // navigate to a blank page or show a message
+                        setTimeout(() => {
+                            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#666;"><p>You can close this tab now.</p></div>';
+                        }, 100);
+                    });
+                }
+
+                let promptShown = false;
+                let alreadyReady = false;
+                try {
+                    promptShown = localStorage.getItem(MODEL_PROMPT_KEY) === 'true';
+                    alreadyReady = localStorage.getItem(MODEL_READY_KEY) === 'true';
+                } catch (_) {}
+
+                if (alreadyReady) {
+                    setModelSetupUIState('loading', { hidePanel: true });
+                    await startModelInitialization();
+                } else {
+                    setModelSetupUIState('idle');
+                    if (!promptShown && modelSetupModal) {
+                        modelSetupModal.style.display = 'flex';
+                    }
+                }
+
+            } catch (error) {
+                console.error('❌ Failed to initialize:', error);
+                alert('Failed to initialize AI models. Please check console for details.');
+            }
+        });
+    </script>
+
+    <script src="static/js/export-import.js"></script>
+
+    <script src="static/js/vectoria.js?v=20250914m"></script>
+</body>
+</html>

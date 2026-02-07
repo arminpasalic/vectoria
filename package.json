@@ -1,0 +1,45 @@
+{
+  "name": "vectoria-browser",
+  "version": "2.0.0",
+  "description": "Browser-first text exploration, clustering and semantic search",
+  "type": "module",
+  "scripts": {
+    "dev": "npx serve web_interface -p 5050",
+    "network": "lsof -ti:5050 | xargs kill -9 2>/dev/null || true && node start-network.js",
+    "https": "lsof -ti:5050 | xargs kill -9 2>/dev/null || true && ./start-https.sh",
+    "build": "echo 'Static build ready - no build step required'",
+    "preview": "npx serve web_interface -p 5050"
+  },
+  "dependencies": {
+    "@chonkiejs/core": "^0.0.5",
+    "@mlc-ai/web-llm": "^0.2.46",
+    "@xenova/transformers": "^2.17.2",
+    "hdbscan-ts": "^1.0.3",
+    "hnswlib-node": "^3.0.0",
+    "hnswlib-wasm": "^0.8.2",
+    "localforage": "^1.10.0",
+    "papaparse": "^5.4.1",
+    "umap-js": "^1.4.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "serve": "^14.2.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "rag",
+    "vector-search",
+    "semantic-search",
+    "embeddings",
+    "llm",
+    "browser-ml",
+    "transformers.js",
+    "webllm",
+    "umap",
+    "interpretability"
+  ],
+  "author": "Armin Pasalic",
+  "license": "MIT"
+}

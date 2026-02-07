@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error - RAG-Vectoria Explorer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="error-page">
+        <div class="error-content">
+            <div class="error-icon">
+                {% if error_code == 404 %}
+                    <i class="fas fa-map-marker-slash"></i>
+                {% else %}
+                    <i class="fas fa-exclamation-triangle"></i>
+                {% endif %}
+            </div>
+            
+            <h1>{{ error_code }}</h1>
+            <h2>{{ error_message }}</h2>
+            
+            {% if error_code == 404 %}
+                <p>The page you're looking for doesn't exist or has been moved.</p>
+            {% else %}
+                <p>Something went wrong on our end. Please try again later.</p>
+            {% endif %}
+            
+            <div class="error-actions">
+                <a href="{{ url_for('index') }}" class="btn btn-primary">
+                    <i class="fas fa-home"></i>
+                    Back to Home
+                </a>
+                
+                <button onclick="window.history.back()" class="btn btn-outline">
+                    <i class="fas fa-arrow-left"></i>
+                    Go Back
+                </button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

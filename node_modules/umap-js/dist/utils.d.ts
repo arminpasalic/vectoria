@@ -1,0 +1,16 @@
+import { RandomFn } from './umap';
+export declare function tauRandInt(n: number, random: RandomFn): number;
+export declare function tauRand(random: RandomFn): number;
+export declare function norm(vec: number[]): number;
+export declare function empty(n: number): undefined[];
+export declare function range(n: number): number[];
+export declare function filled(n: number, v: number): number[];
+export declare function zeros(n: number): number[];
+export declare function ones(n: number): number[];
+export declare function linear(a: number, b: number, len: number): number[];
+export declare function sum(input: number[]): number;
+export declare function mean(input: number[]): number;
+export declare function max(input: number[]): number;
+export declare function max2d(input: number[][]): number;
+export declare function rejectionSample(nSamples: number, poolSize: number, random: RandomFn): number[];
+export declare function reshape2d<T>(x: T[], a: number, b: number): T[][];

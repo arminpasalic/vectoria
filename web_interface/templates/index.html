@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vectoria</title>
+    <!-- Link the updated CSS file -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=20250914n">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.14.0/plotly.min.js"></script>
+    <!-- Standard favicon -->
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/icon.ico') }}?v=20250913b">
+    <!-- For Apple devices -->
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.ico') }}?v=20250913b">
+</head>
+
+<body class="theme-light">
+    <!-- Filter Notification Banner -->
+    <div id="filter-notification-banner" class="filter-notification-banner">
+        <span id="filter-notification-text">Filters applied</span>
+    </div>
+
+    <header>
+        <div class="container header-content">
+            <div class="logo">
+                <img src="{{ url_for('static', filename='img/logo.svg') }}" alt="Vectoria Logo" data-logo-light="{{ url_for('static', filename='img/logo-dark.svg') }}" data-logo-dark="{{ url_for('static', filename='img/logo.svg') }}">
+                <h1>VECTORIA</h1>
+            </div>
+            <div class="header-actions">
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- Section: Upload & Process -->
+        <div id="upload-tab" class="tab-content active" style="display: block;">
+            <div class="card">
+                <div class="card-header">
+                    <h2>1. Upload Your File</h2>
+                    <p class="card-subtitle">Upload your data file and explore semantic clusters with AI-powered search.
+                    </p>
+                </div>
+                <div class="card-body">
+                    <form id="csv-upload-form" enctype="multipart/form-data">
+                        <div class="form-group">
+                            <label for="csv-file" class="form-label">Select a file:</label>
+                            <input type="file" id="csv-file" name="file" accept=".csv,.xlsx,.xls,.json,.txt"
+                                class="form-control">
+                            <small class="form-help">Supported formats: CSV, Excel, JSON, TXT</small>
+                        </div>
+                        <button type="submit" id="upload-btn" class="btn btn-primary">Upload</button>
+                    </form>
+                    <div id="upload-error" class="alert alert-danger" style="display: none;"></div>
+                    <div id="upload-success" class="alert alert-success" style="display: none;"></div>
+                    <div id="upload-loader" class="loader" style="display: none;"></div>
+                </div>
+            </div>
+
+            <!-- Column Selection & Processing Section (initially hidden) -->
+            <div id="column-selection" class="card" style="display: none;">
+                <div class="card-header">
+                    <h2>2. Configure & Process</h2>
+                </div>
+                <div class="card-body">
+                    <p>Select the column containing the text you want to analyze:</p>
+                    <div class="form-group">
+                        <select id="text-column-select" class="form-control">
+                            <option value="">Select a column...</option>
+                        </select>
+                    </div>
+
+                    <!-- Advanced Settings -->
+                    <div class="form-group">
+                        <button type="button" id="open-advanced-settings" class="btn btn-secondary">
+                            <i class="fas fa-cog"></i> Advanced Settings
+                        </button>
+                        <small class="form-help">Configure models, RAG parameters, clustering, and visualization
+                            settings</small>
+                    </div>
+
+                    <!-- Process Button -->
+                    <div class="process-controls">
+                        <button id="process-csv-btn" class="btn btn-primary" disabled>Process Data</button>
+                        <button id="delete-data-cache-btn" class="btn btn-danger btn-sm"
+                            title="Delete all data and cache (DEV)">
+                            <i class="fas fa-trash-alt"></i> Delete Data & Cache
+                        </button>
+                        <div id="processing-loader" class="loader" style="display: none;"></div>
+                    </div>
+                    <div id="processing-error" class="alert alert-danger" style="display: none;"></div>
+                    <div id="processing-success" class="alert alert-success" style="display: none;"></div>
+
+                    <!-- Sample Data Container -->
+                    <div id="sample-data-container" class="sample-data" style="margin-top: 20px; display: none;">
+                        <h3>Sample Data Preview</h3>
+                        <hr>
+                        <div id="sample-data-table" class="sample-table"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section: Explore -->
+        <div id="explore-tab" class="tab-content" style="display: none;">
+            <!-- Search Control Bar -->
+            <div class="explore-header">
+                <div class="search-section-compact">
+                    <div class="search-input-group">
+                        <input type="text" id="search-input" placeholder="Search your data..."
+                            class="search-input form-control">
+                        <button id="search-btn" class="btn btn-primary">
+                            <i class="fas fa-search"></i>
+                            Search
+                        </button>
+                    </div>
+
+                    <!-- Search Options -->
+                    <div class="search-options-compact">
+                        <div class="option-group">
+                            <select id="search-type" class="form-control">
+                                <option value="fast" selected>Keyword search</option>
+                                <option value="semantic">Semantic search</option>
+                                <option value="rag">Ask AI (RAG)</option>
+                            </select>
+                        </div>
+                        <div class="option-group" id="result-count-group" style="display: none;">
+                            <select id="result-count" class="form-control">
+                                <option value="5">5 results</option>
+                                <option value="10" selected>10 results</option>
+                                <option value="20">20 results</option>
+                                <option value="50">50 results</option>
+                            </select>
+                        </div>
+                        <div class="option-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="highlight-results" checked>
+                                <span class="checkbox-custom"></span>
+                                Highlight
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- RAG Mode UI - Only visible when Ask AI mode is selected -->
+                    <div id="rag-mode-ui" class="rag-mode-ui" style="display: none;">
+                        <div class="rag-info-banner">
+                            <div class="rag-info-content">
+                                <div class="rag-info-icon">
+                                    <i class="fas fa-robot"></i>
+                                </div>
+                                <div class="rag-info-text">
+                                    <strong>AI Assistant Active</strong>
+                                    <p id="rag-scope-text">Analyzing your entire dataset</p>
+                                </div>
+                            </div>
+                            <button type="button" id="rag-settings-btn" class="btn btn-sm btn-outline-primary"
+                                title="Configure AI settings">
+                                <i class="fas fa-cog"></i>
+                                <span>Settings</span>
+                            </button>
+                        </div>
+
+                    </div>
+
+                    <!-- AI Answer Card (RAG) -->
+                    <div id="rag-answer-card" class="rag-answer-card" style="display: none;">
+                        <div class="ai-answer-container">
+                            <div class="ai-answer-header">
+                                <div class="ai-answer-title">
+                                    <i class="fas fa-robot"></i>
+                                    <span>AI Answer</span>
+                                </div>
+                                <span id="rag-answer-meta" class="ai-answer-meta"></span>
+                            </div>
+                            <div class="ai-answer-body">
+                                <div id="rag-answer-text" class="ai-answer-text"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Hidden elements for backwards compatibility -->
+                    <button type="button" id="toggle-hyde-mode" style="display: none;"></button>
+                    <span id="hyde-mode-indicator" style="display: none;"></span>
+
+                    <!-- Active Filter Status Bar -->
+                    <div id="filter-status-bar" class="filter-status-bar" style="display: none;">
+                        <div class="filter-status-left">
+                            <i class="fas fa-filter"></i>
+                            <span id="filter-status-text">Filters active</span>
+                            <span id="filter-status-count" class="filter-count-badge">0</span>
+                            <div id="filter-status-list" class="filter-status-list"></div>
+                        </div>
+                        <div class="filter-status-right">
+                            <button id="clear-active-filters" class="btn btn-sm btn-outline">
+                                <i class="fas fa-times-circle"></i> Clear Filters
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Search Results -->
+                    <div id="search-results" class="search-results-compact" style="display: none;">
+                        <div class="results-header">
+                            <span id="results-count" class="results-count">0 results</span>
+                            <button id="clear-search" class="btn btn-sm btn-outline">Clear</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main visualization and text display layout -->
+            <div class="explore-content">
+                <div class="visualization-text-container">
+                    <!-- Two-column layout for visualization and text display -->
+                    <div class="main-viz-text-container">
+                        <!-- Left column: Visualization and Filters -->
+                        <div class="viz-column">
+                            <div class="card fullheight-card">
+                                <div class="card-body visualization-wrapper">
+                                    <div class="visualization-container" id="main-viz-container">
+                                        <div id="loader" class="loader"></div>
+                                        <div id="visualization-error" class="alert alert-danger" style="display: none;">
+                                        </div>
+                                        <div id="no-data-message" class="alert alert-info" style="display: none;">
+                                            No data available for visualization. Please upload and process a file first.
+                                        </div>
+                                        <canvas id="viz-canvas"></canvas>
+                                        <div id="tooltip" class="tooltip"></div>
+                                    </div>
+                                    <!-- Vertical controls panel for visualization -->
+                                    <div class="viz-controls-panel">
+                                        <button id="zoom-in-btn" class="viz-control-btn" title="Zoom In">
+                                            <i class="fas fa-search-plus"></i>
+                                        </button>
+                                        <button id="zoom-out-btn" class="viz-control-btn" title="Zoom Out">
+                                            <i class="fas fa-search-minus"></i>
+                                        </button>
+                                        <button id="reset-view-btn" class="viz-control-btn" title="Reset View">
+                                            <i class="fas fa-home"></i>
+                                        </button>
+                                        <button id="fullscreen-btn" class="viz-control-btn" title="Fullscreen">
+                                            <i class="fas fa-expand"></i>
+                                        </button>
+                                        <button id="toggle-labels-btn" class="viz-control-btn" title="Toggle Labels">
+                                            <i class="fas fa-font"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Separate filters panel below visualization -->
+                            <div class="filters-panel-container">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h2>Filters</h2>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="metadata-filters-section" class="metadata-filters-section">
+                                            <div id="metadata-filters-grid" class="metadata-filter-grid">
+                                                <!-- Dynamic filter controls will be added here -->
+                                            </div>
+                                            <div class="metadata-filter-actions">
+                                                <button id="apply-metadata-filters" class="apply-filters-btn">Apply
+                                                    Filters</button>
+                                                <button id="clear-metadata-filters" class="clear-filters-btn">Clear
+                                                    All</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right column: Text display -->
+                        <div class="text-column">
+                            <div class="card fullheight-card">
+                                <div class="card-header">
+                                    <h2>Text Content <span id="text-content-count" class="text-count">(0)</span></h2>
+                                </div>
+                                <div class="card-body">
+                                    <div id="text-display-container" class="text-display-container">
+                                        <div id="text-list" class="text-list scrollable-list">
+                                            <!-- Text items will be dynamically added here -->
+                                        </div>
+                                        <div id="selected-text-view" class="selected-text-view" style="display: none;">
+                                            <button id="back-to-list-btn" class="btn btn-sm">
+                                                <i class="fas fa-arrow-left"></i> Back to List
+                                            </button>
+                                            <div id="selected-text-content" class="selected-text-content">
+                                                <!-- Selected text details will be shown here -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Advanced Settings Modal -->
+        <div id="advanced-settings-modal" class="modal-overlay" style="display: none;">
+            <div class="modal-container">
+                <div class="modal-header">
+                    <h2>Advanced Settings</h2>
+                    <button type="button" class="modal-close" id="close-advanced-settings">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p>Configure all aspects of the system including models, RAG parameters, clustering, and
+                        visualization</p>
+
+                    <!-- Settings Categories -->
+                    <div class="settings-categories">
+                        <div class="settings-nav">
+                            <button class="settings-nav-btn active" data-category="llm">
+                                <span class="settings-nav-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" role="presentation">
+                                        <rect x="3.5" y="5" width="8" height="14" rx="1.4"></rect>
+                                        <rect x="12.5" y="5" width="8" height="14" rx="1.4"></rect>
+                                        <line x1="7" y1="8" x2="9.5" y2="8"></line>
+                                        <line x1="16" y1="8" x2="18.5" y2="8"></line>
+                                    </svg>
+                                </span>
+                                <span class="settings-nav-label">Language Model</span>
+                            </button>
+                            <button class="settings-nav-btn" data-category="embeddings">
+                                <span class="settings-nav-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" role="presentation">
+                                        <circle cx="6" cy="12" r="2.2"></circle>
+                                        <circle cx="12" cy="6" r="2.2"></circle>
+                                        <circle cx="18" cy="12" r="2.2"></circle>
+                                        <circle cx="12" cy="18" r="2.2"></circle>
+                                        <line x1="7.8" y1="10.3" x2="10.3" y2="7.8"></line>
+                                        <line x1="13.7" y1="7.8" x2="16.2" y2="10.3"></line>
+                                        <line x1="7.8" y1="13.7" x2="10.3" y2="16.2"></line>
+                                        <line x1="13.7" y1="16.2" x2="16.2" y2="13.7"></line>
+                                    </svg>
+                                </span>
+                                <span class="settings-nav-label">Embeddings</span>
+                            </button>
+                            <button class="settings-nav-btn" data-category="prompts">
+                                <span class="settings-nav-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" role="presentation">
+                                        <path
+                                            d="M5.5 6h13a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H13l-3.5 3v-3H5.5A1.5 1.5 0 0 1 4 13.5v-6A1.5 1.5 0 0 1 5.5 6z">
+                                        </path>
+                                        <line x1="8" y1="10" x2="16" y2="10"></line>
+                                        <line x1="8" y1="13" x2="12.5" y2="13"></line>
+                                    </svg>
+                                </span>
+                                <span class="settings-nav-label">Prompts</span>
+                            </button>
+                            <button class="settings-nav-btn" data-category="rag">
+                                <span class="settings-nav-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" role="presentation">
+                                        <line x1="5" y1="7" x2="19" y2="7"></line>
+                                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                                        <line x1="5" y1="17" x2="19" y2="17"></line>
+                                        <circle cx="9" cy="7" r="1.6" fill="currentColor"></circle>
+                                        <circle cx="15" cy="12" r="1.6" fill="currentColor"></circle>
+                                        <circle cx="11" cy="17" r="1.6" fill="currentColor"></circle>
+                                    </svg>
+                                </span>
+                                <span class="settings-nav-label">RAG Parameters</span>
+                            </button>
+                            <button class="settings-nav-btn" data-category="clustering">
+                                <span class="settings-nav-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" role="presentation">
+                                        <circle cx="9" cy="9" r="3.4"></circle>
+                                        <circle cx="15" cy="9" r="3.4"></circle>
+                                        <circle cx="12" cy="15" r="3.4"></circle>
+                                    </svg>
+                                </span>
+                                <span class="settings-nav-label">Clustering</span>
+                            </button>
+                            <button class="settings-nav-btn" data-category="visualization">
+                                <span class="settings-nav-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" role="presentation">
+                                        <line x1="5" y1="18" x2="5" y2="10"></line>
+                                        <line x1="11" y1="18" x2="11" y2="6"></line>
+                                        <line x1="17" y1="18" x2="17" y2="12"></line>
+                                        <line x1="4" y1="18" x2="20" y2="18"></line>
+                                    </svg>
+                                </span>
+                                <span class="settings-nav-label">Visualization</span>
+                            </button>
+                        </div>
+
+                        <!-- Language Model Settings -->
+                        <div class="settings-category active" data-category="llm">
+                            <h3>Language Model Configuration</h3>
+
+                            <div class="form-group">
+                                <label for="llm-model-url"
+                                    title="Enter a direct download URL from Hugging Face for a GGUF model">Model
+                                    URL:</label>
+                                <input type="url" id="llm-model-url" class="form-control"
+                                    value="https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/main/google_gemma-3-4b-it-Q5_K_S.gguf"
+                                    placeholder="https://huggingface.co/...">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="llm-model-name" title="A friendly name for this model">Model Name:</label>
+                                <input type="text" id="llm-model-name" class="form-control"
+                                    value="google_gemma-3-4b-it-Q5_K_S" placeholder="Enter a name for this model">
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="temperature"
+                                        title="Controls randomness in responses (0.0 = deterministic, 2.0 = very creative)">Temperature:</label>
+                                    <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.4">
+                                    <span class="range-value">0.4</span>
+                                </div>
+                                <div class="form-group">
+                                    <label for="max-tokens"
+                                        title="Maximum number of tokens the model can generate in one response">Max
+                                        Tokens:</label>
+                                    <input type="number" id="max-tokens" value="2048" min="100" max="8192">
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="top-p"
+                                        title="Nucleus sampling: considers only tokens with cumulative probability up to this value">Top
+                                        P:</label>
+                                    <input type="range" id="top-p" min="0" max="1" step="0.01" value="0.95">
+                                    <span class="range-value">0.95</span>
+                                </div>
+                                <div class="form-group">
+                                    <label for="top-k"
+                                        title="Limits the model to consider only the top K most likely next tokens">Top
+                                        K:</label>
+                                    <input type="number" id="top-k" value="50" min="1" max="100">
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="repeat-penalty"
+                                        title="Penalty for repeating tokens (1.0 = no penalty, higher = less repetition)">Repeat
+                                        Penalty:</label>
+                                    <input type="range" id="repeat-penalty" min="1" max="1.5" step="0.01" value="1.1">
+                                    <span class="range-value">1.1</span>
+                                </div>
+                                <div class="form-group">
+                                    <label for="max-context"
+                                        title="Maximum context length that the model can process">Max Context:</label>
+                                    <input type="number" id="max-context" value="2048" min="512" max="8192">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Embeddings Settings -->
+                        <div class="settings-category" data-category="embeddings">
+                            <h3>Embedding Model Configuration</h3>
+
+                            <div class="form-group">
+                                <label for="embedding-model-select"
+                                    title="Choose a SentenceTransformer model for creating text embeddings">Embedding
+                                    Model:</label>
+                                <select id="embedding-model-select" class="form-control">
+                                    <option value="all-mpnet-base-v2">all-mpnet-base-v2 (Best quality, slower)</option>
+                                    <option value="all-MiniLM-L12-v2">all-MiniLM-L12-v2 (Good balance)</option>
+                                    <option value="all-MiniLM-L6-v2">all-MiniLM-L6-v2 (Fast, smaller)</option>
+                                    <option value="paraphrase-multilingual-MiniLM-L12-v2">
+                                        paraphrase-multilingual-MiniLM-L12-v2 (Multilingual)</option>
+                                    <option value="multi-qa-mpnet-base-dot-v1">multi-qa-mpnet-base-dot-v1
+                                        (Question-answering focused)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="embedding-batch-size"
+                                        title="Number of texts processed together (higher = faster but more memory)">Batch
+                                        Size:</label>
+                                    <input type="number" id="embedding-batch-size" value="32" min="1" max="128">
+                                </div>
+                                <div class="form-group">
+                                    <label for="embedding-device"
+                                        title="Computational device for embedding generation">Device:</label>
+                                    <select id="embedding-device" class="form-control">
+                                        <option value="auto">Auto (use best available)</option>
+                                        <option value="webgpu">WebGPU (GPU acceleration)</option>
+                                        <option value="cpu" selected>CPU (WASM)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="embedding-max-length"
+                                    title="Maximum token length for input texts (longer texts will be truncated)">Max
+                                    Sequence Length:</label>
+                                <input type="number" id="embedding-max-length" value="384" min="128" max="512">
+                            </div>
+                        </div>
+
+                        <!-- Prompts Settings -->
+                        <div class="settings-category" data-category="prompts">
+                            <h3>RAG Prompts Configuration</h3>
+
+                            <div class="form-group">
+                                <label for="system-prompt"
+                                    title="Instructions that define the AI assistant's behavior and response style">System
+                                    Prompt:</label>
+                                <textarea id="system-prompt" class="form-control" rows="8"
+                                    placeholder="Enter system prompt...">You are an intelligent assistant that answers questions based on provided context documents.
+Your task is to provide accurate, helpful, and comprehensive answers using only the information from the given context.
+
+Instructions:
+1. Always base your answers on the provided context documents
+2. If the context doesn't contain enough information to answer the question, say so clearly
+3. When citing information, refer to it naturally without formal citations unless requested
+4. Be concise but comprehensive in your responses
+5. If there are conflicting information in the context, acknowledge this and explain the different perspectives
+6. Do not make up information that isn't in the context
+7. If asked about something not covered in the context, politely explain the limitation</textarea>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="user-template"
+                                    title="Template for formatting user questions with context documents">User
+                                    Template:</label>
+                                <textarea id="user-template" class="form-control" rows="6"
+                                    placeholder="Enter user template...">Context Documents:
+{context}
+
+Question: {question}
+
+Please provide a comprehensive answer based on the context documents above.</textarea>
+                            </div>
+                        </div>
+
+                        <!-- RAG Parameters -->
+                        <div class="settings-category" data-category="rag">
+                            <h3>RAG System Parameters</h3>
+
+                            <div class="form-group">
+                                <label class="rag-toggle-label rag-settings-toggle">
+                                    <input type="checkbox" id="hyde-mode-toggle" class="rag-toggle-input">
+                                    <span class="rag-toggle-slider"></span>
+                                    <span class="rag-toggle-text">
+                                        <i class="fas fa-lightbulb"></i>
+                                        HyDE Mode
+                                        <small>Generate hypothetical answer first for better results</small>
+                                    </span>
+                                </label>
+                            </div>
+
+                            <h4>Search Configuration</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="vector-search-k"
+                                        title="Number of similar documents to retrieve from vector search">Vector Search
+                                        K:</label>
+                                    <input type="number" id="vector-search-k" value="30" min="5" max="100">
+                                </div>
+                                <div class="form-group">
+                                    <label for="similarity-threshold"
+                                        title="Minimum similarity score for documents to be considered relevant">Similarity
+                                        Threshold:</label>
+                                    <input type="range" id="similarity-threshold" min="0" max="1" step="0.01"
+                                        value="0.1">
+                                    <span class="range-value">0.1</span>
+                                </div>
+                            </div>
+
+                            <h4>Retrieval Strategy</h4>
+                            <div class="form-group">
+                                <label for="rag-retrieval-mode"
+                                    title="Semantic retrieval is always used for RAG context">
+                                    Retrieval Mode:
+                                </label>
+                                <select id="rag-retrieval-mode" class="form-control" disabled>
+                                    <option value="semantic" selected>Semantic (Vector)</option>
+                                </select>
+                            </div>
+
+                            <h4>BM25 Parameters</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="bm25-k1"
+                                        title="Controls term frequency saturation (1.2-2.0 typical range)">K1 (Term
+                                        Frequency):</label>
+                                    <input type="range" id="bm25-k1" min="1" max="3" step="0.1" value="1.5">
+                                    <span class="range-value">1.5</span>
+                                </div>
+                                <div class="form-group">
+                                    <label for="bm25-b" title="Controls document length normalization (0.0-1.0 range)">B
+                                        (Length Normalization):</label>
+                                    <input type="range" id="bm25-b" min="0" max="1" step="0.01" value="0.75">
+                                    <span class="range-value">0.75</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Clustering Parameters -->
+                        <div class="settings-category" data-category="clustering">
+                            <h3>Clustering Configuration</h3>
+
+                            <h4>UMAP Parameters</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="umap-n-neighbors"
+                                        title="How many neighbors to consider. Higher = more global structure, Lower = more local detail">
+                                        N Neighbors:
+                                    </label>
+                                    <input type="number" id="umap-n-neighbors" value="15" min="5" max="50" step="1">
+                                    <small class="form-help">Default: 15. Range: 5-50</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="umap-min-dist"
+                                        title="Minimum distance between points in low-D space. 0.0 = tighter clusters, 0.5 = more spread">
+                                        Min Distance:
+                                    </label>
+                                    <input type="number" id="umap-min-dist" value="0.1" min="0" max="0.5" step="0.05">
+                                    <small class="form-help">Default: 0.1 (balanced). Range: 0.0-0.5</small>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="umap-metric">Distance Metric:</label>
+                                <select id="umap-metric" class="form-control">
+                                    <option value="cosine" selected>Cosine (recommended for text embeddings)</option>
+                                    <option value="euclidean">Euclidean</option>
+                                    <option value="manhattan">Manhattan</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="umap-sample-size"
+                                    title="For large datasets, fit UMAP on a sample and transform the rest. Lower = faster but less accurate">
+                                    UMAP Sample Size (for large datasets):
+                                </label>
+                                <input type="number" id="umap-sample-size" value="10000" min="1000" max="50000"
+                                    step="1000">
+                                <small class="form-help">
+                                    Default: 10,000. Datasets larger than this will use sub-sampling. Higher = slower
+                                    but more accurate.
+                                </small>
+                            </div>
+
+                            <h4>HDBSCAN - Hierarchical Clustering</h4>
+                            <div class="info-box info-box-mb">
+                                <small class="text-secondary">
+                                    HDBSCAN automatically finds clusters and outliers using <strong>scikit-learn
+                                        (Pyodide)</strong>. Clustering always runs with an Euclidean metric internally,
+                                    even if UMAP uses cosine.
+                                </small>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="hdbscan-min-cluster-size"
+                                        title="Minimum points needed to form a cluster. Smaller = more clusters, Larger = fewer, bigger clusters">
+                                        Min Cluster Size:
+                                    </label>
+                                    <input type="number" id="hdbscan-min-cluster-size" value="5" min="3" max="50"
+                                        step="1">
+                                    <small class="form-help">
+                                        Default: 5. Recommended: 3-5 (small data), 5-10 (medium), 10-20 (large)
+                                    </small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="hdbscan-min-samples"
+                                        title="Core point threshold. Leave empty to match Min Cluster Size. Higher = more noise points.">
+                                        Min Samples:
+                                    </label>
+                                    <input type="number" id="hdbscan-min-samples" value="5" min="1" max="50" step="1">
+                                    <small class="form-help">
+                                        Default: 5 (same as Min Cluster Size). Use higher for noisy data.
+                                    </small>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <h4>Quick Tips</h4>
+                                <div class="info-box">
+                                    <small class="text-secondary">
+                                        <strong>Too many small clusters?</strong> Increase Min Cluster Size to 10-20<br>
+                                        <strong>All points are noise?</strong> Decrease Min Cluster Size to 3-5<br>
+                                        <strong>Noisy data?</strong> Increase Min Samples to filter outliers<br>
+                                        <strong>Want local detail?</strong> Decrease UMAP N Neighbors to 5-10<br>
+                                        <strong>Want global structure?</strong> Increase UMAP N Neighbors to 30-50<br>
+                                        <strong>First run slow?</strong> The Pyodide runtime downloads the HDBSCAN
+                                        engine the first time you cluster (~25&nbsp;MB).
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Visualization Parameters -->
+                        <div class="settings-category" data-category="visualization">
+                            <h3>Visualization Settings</h3>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="viz-point-size"
+                                        title="Size of data points in the visualization (1-20)">Point Size:</label>
+                                    <input type="range" id="viz-point-size" min="1" max="20" value="4">
+                                    <span class="range-value">4</span>
+                                </div>
+                                <div class="form-group">
+                                    <label for="viz-opacity" title="Transparency of data points (0.1-1.0)">Point
+                                        Opacity:</label>
+                                    <input type="range" id="viz-opacity" min="0.1" max="1" step="0.1" value="0.8">
+                                    <span class="range-value">0.8</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label title="Show cluster boundaries">
+                                    <input type="checkbox" id="show-cluster-hulls" checked>
+                                    Show Cluster Boundaries
+                                </label>
+                            </div>
+
+                            <div class="form-group">
+                                <label title="Enable enhanced tooltips with detailed information">
+                                    <input type="checkbox" id="enhanced-tooltips" checked>
+                                    Enhanced Tooltips
+                                </label>
+                            </div>
+
+                            <div class="settings-actions">
+                                <button id="save-settings-btn" class="btn btn-primary">Save Configuration</button>
+                                <button id="reset-settings-btn" class="btn btn-secondary">Reset to Defaults</button>
+                                <button id="load-settings-btn" class="btn btn-secondary">Load Current</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+    </main>
+
+    <!-- Processing Summary Modal -->
+    <div id="processing-summary-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Processing Summary</h2>
+                <button type="button" class="modal-close" id="close-processing-summary">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="processing-summary-content">
+                    <!-- Populated dynamically with processing stats -->
+                </div>
+                <div class="modal-footer-actions">
+                    <button id="continue-to-explore" class="btn btn-primary">
+                        Continue to Explore
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 VECTORIA, Armin Pasalic</p>
+        </div>
+    </footer>
+
+    <!-- Add JavaScript files in correct dependency order -->
+    <!-- height-matcher disabled: replaced with pure CSS flex equal height -->
+    <script src="{{ url_for('static', filename='js/viz.js') }}?v=20250913b"></script>
+    <script src="{{ url_for('static', filename='js/webgl-renderer.js') }}?v=20250913b"></script>
+    <script src="{{ url_for('static', filename='js/fast-search.js') }}?v=20250914l"></script>
+    <script src="{{ url_for('static', filename='js/search-enhancement.js') }}?v=20250913b"></script>
+    <script src="{{ url_for('static', filename='js/vectoria.js') }}?v=20250914m"></script>
+</body>
+
+</html>
