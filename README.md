@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://vectoria.vercel.app">
+  <a href="https://vectoria.app/">
     <img src="https://img.shields.io/badge/Live_Demo-Try_it_Now-blue?style=for-the-badge&logo=vercel" alt="Live Demo" />
   </a>
 </p>
