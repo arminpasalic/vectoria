@@ -74,7 +74,7 @@ All running **entirely in your browser using your device's hardware** with zero 
 ## How to use
 
 ### 1. Upload your data
-Drag & drop or select:
+Select and load:
 - CSV files (with header row)
 - Excel spreadsheets (.xlsx, .xls)
 - JSON files (array of objects)
