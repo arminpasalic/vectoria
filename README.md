@@ -20,7 +20,7 @@
 
 A fully browser-native semantic search, exploration, and RAG system that runs 100% client-side.
 
-🚀 **Built on Open-source** | 🔒 **Privacy-preserving** | 📊 **Interactive Visualization** | 🤖 **AI-powered RAG** | ⚡ **Offline-capable**
+🚀 **Built on Open-source** | 🔒 **Privacy-preserving** | 📊 **Interactive Visualization & Exploration** | 🤖 **AI-powered RAG**
 
 <p align="center">
   <img src="web_interface/static/img/example.png" alt="Vectoria example">
