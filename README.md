@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://vectoria.vercel.app">
+  <a href="https://vectoria.app/">
     <img src="https://img.shields.io/badge/Live_Demo-Try_it_Now-blue?style=for-the-badge&logo=vercel" alt="Live Demo" />
   </a>
 </p>
@@ -20,7 +20,7 @@
 
 A fully browser-native semantic search, exploration, and RAG system that runs 100% client-side.
 
-🚀 **Built on Open-source** | 🔒 **Privacy-preserving** | 📊 **Interactive Visualization** | 🤖 **AI-powered RAG** | ⚡ **Offline-capable**
+🚀 **Built on Open-source** | 🔒 **Privacy-preserving** | 📊 **Interactive Visualization & Exploration** | 🤖 **AI-powered RAG**
 
 <p align="center">
   <img src="web_interface/static/img/example.png" alt="Vectoria example">
@@ -74,7 +74,7 @@ All running **entirely in your browser using your device's hardware** with zero 
 ## How to use
 
 ### 1. Upload your data
-Drag & drop or select:
+Select and load:
 - CSV files (with header row)
 - Excel spreadsheets (.xlsx, .xls)
 - JSON files (array of objects)
