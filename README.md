@@ -23,7 +23,7 @@ A fully browser-native semantic search, exploration, and RAG system that runs 10
 🚀 **Built on Open-source** | 🔒 **Privacy-preserving** | 📊 **Interactive Visualization & Exploration** | 🤖 **AI-powered RAG**
 
 <p align="center">
-  <img src="web_interface/static/img/example.png" alt="Vectoria example">
+  <img src="web_interface/static/img/example.gif" alt="Vectoria demo" width="800">
 </p>
 
 ---

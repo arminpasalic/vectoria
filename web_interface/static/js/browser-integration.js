@@ -502,9 +502,9 @@ function enableUploadUI() {
         const hasFile = !!(fileInput && fileInput.files && fileInput.files.length > 0);
         uploadBtn.disabled = !hasFile;
         if (uploadBtnText) {
-            uploadBtnText.textContent = 'Upload';
+            uploadBtnText.textContent = 'Load data';
         } else {
-            uploadBtn.textContent = 'Upload';
+            uploadBtn.textContent = 'Load data';
         }
     }
 
@@ -1268,7 +1268,7 @@ function showModelLoadingModal() {
                 <div style="display: flex; align-items: center; gap: 0.5rem;">
                     <i class="fas fa-info-circle" style="color: var(--text-muted);"></i>
                     <span>${isFirstVisit ?
-                        'Models are stored in your browser cache. Clear browser data to remove them.' :
+                        'Models are stored locally in your browser. Clear browser data in advanced settings to remove them.' :
                         'Data and models are cached locally. Your files and queries never leave your computer.'}</span>
                 </div>
             </div>

@@ -1216,6 +1216,12 @@ header {
     border: 2px solid var(--accent-neutral);
     background: rgba(99, 102, 241, 0.03);
     border-radius: 10px;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.custom-file-input-wrapper.drag-over {
+    border: 2px dashed var(--accent-primary, #6366f1);
+    background: rgba(99, 102, 241, 0.10);
 }
 
 .custom-file-input {

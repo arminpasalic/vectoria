@@ -1013,6 +1013,50 @@ function initCSVUpload() {
         });
     }
 
+    // Drag-and-drop support on the file input wrapper
+    const dropZone = document.querySelector('.custom-file-input-wrapper');
+    if (dropZone && fileInput) {
+        const acceptedExts = ['.csv', '.xlsx', '.xls', '.json', '.txt'];
+
+        dropZone.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+
+        dropZone.addEventListener('dragenter', function(e) {
+            e.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+
+        dropZone.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+        });
+
+        dropZone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+
+            if (fileInput.disabled) return;
+
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            if (!acceptedExts.includes(ext)) {
+                if (typeof showToast === 'function') {
+                    showToast('Unsupported file type. Accepted: CSV, Excel, JSON, TXT', 'error');
+                }
+                return;
+            }
+
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            fileInput.files = dt.files;
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+    }
+
     // Define the reset function
     function resetUploadForm() {
         fileInput.value = '';
