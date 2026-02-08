@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Vectoria - A fully browser-native semantic search and RAG system. Upload documents, generate embeddings, cluster, search and chat with your data. Zero backend, 100% client-side.">
+    <meta name="description" content="Vectoria - A fully browser-native semantic search and RAG system. Load your documents, generate embeddings, cluster, search and chat with your data. No backend, 100% client-side running on your device.">
     <meta name="theme-color" content="#1a1a2e">
     <meta property="og:title" content="Vectoria - Browser-first text exploration, clustering, and semantic search">
-    <meta property="og:description" content="Upload documents, generate embeddings, cluster, search and chat with your data. Everything runs in your browser.">
+    <meta property="og:description" content="Load your documents, generate embeddings, cluster, search, and chat with your data. Everything runs locally in your browser.">
     <meta property="og:type" content="website">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="Vectoria - Browser-Native Semantic Search & RAG">
@@ -68,15 +68,15 @@
         <div id="upload-tab" class="tab-content active" style="display: block;">
             <div class="card">
                 <div class="card-header">
-                    <h2>1. Upload your data file</h2>
-                    <p style="margin: 0.5rem 0 0 0; color: var(--text-secondary); font-size: 0.80rem;"><strong>Browser-first text exploration, clustering and semantic search.</strong> Upload your data file and explore semantic clusters with AI-powered search.</p>
+                    <h2>1. Load your data file</h2>
+                    <p style="margin: 0.5rem 0 0 0; color: var(--text-secondary); font-size: 0.80rem;"><strong>Browser-first text exploration, clustering and semantic search.</strong> Load your data file and explore semantic clusters with AI-powered search.</p>
                 </div>
                 <div class="card-body">
                     <form id="csv-upload-form" enctype="multipart/form-data">
                         <div id="model-setup-panel" class="model-setup-panel">
                             <div class="model-setup-panel-text">
                                 <strong>Set up AI models</strong>
-                                <p>Download the embeddings model & Large Language Model (LLM) once to enable uploads and search. You control when it starts.</p>
+                                <p>Download the embeddings model & Large Language Model (LLM) to your device once to enable local processing of your data and search. You control when it starts.</p>
                             </div>
                             <button type="button" id="start-model-setup-btn" class="btn btn-primary">
                                 Start setup
@@ -94,10 +94,10 @@
                             <small class="form-help">Supported formats: CSV, Excel, JSON, TXT</small>
                         </div>
                         <button type="submit" id="upload-btn" class="btn btn-primary" disabled>
-                            <span id="upload-btn-text">Upload</span>
+                            <span id="upload-btn-text">Load data</span>
                         </button>
                         <small class="form-help" id="model-loading-status" style="display: block; margin-top: 10px; color: var(--text-secondary);">
-                            Download the AI models to enable uploads (first time can take a few minutes).
+                            Download the AI models to enable loading of your data file (first time can take a few minutes).
                         </small>
                     </form>
 
@@ -107,7 +107,7 @@
                         </label>
                         <input type="file" id="import-dataset-file" accept=".vectoria.json,.json" style="display: none;">
                         <button id="import-dataset-btn" class="btn btn-secondary" style="margin-right: 12px;">
-                            <i class="fas fa-upload"></i> Load dataset
+                            <i class="fas fa-upload"></i> Load saved dataset
                         </button>
                         <small class="form-help" style="display: block; margin-top: 8px;">
                             Load complete datasets. Uses <code>.vectoria.json</code> format.
@@ -296,7 +296,7 @@
                                     <div id="loader" class="loader"></div>
                                     <div id="visualization-error" class="alert alert-danger" style="display: none;"></div>
                                     <div id="no-data-message" class="alert alert-info" style="display: none;">
-                                        No data available for visualization. Please upload and process a file first.
+                                        No data available for visualization. Please load and process a data file first.
                                     </div>
                                     <canvas id="viz-canvas"></canvas>
                                     <div id="tooltip" class="tooltip"></div>
@@ -968,7 +968,7 @@
                     Welcome to Vectoria — a private, browser-native tool for exploring, clustering, and chatting with your documents.
                 </p>
                 <p class="model-setup-intro model-setup-intro-lead" style="color: #fff;">
-                    Upload your documents, explore them visually, search by meaning, and ask real questions. All powered by local AI models running entirely on your own device.
+                    Load your documents, explore them visually, search by meaning, and ask real questions. All powered by local AI models running entirely on your own device.
                 </p>
                 <p class="model-setup-intro" style="color: rgba(255,255,255,0.55); font-size: 0.88em; line-height: 1.6; margin-top: 0.25em;">
                     Supports CSV, Excel, JSON &amp; TXT data files with text columns &nbsp;&middot;&nbsp; Automatic semantic clustering &amp; 2D visualization &nbsp;&middot;&nbsp; Semantic exploration and search &nbsp;&middot;&nbsp; Enables AI-generated answers using your data (RAG/HyDE)
@@ -1091,7 +1091,7 @@
                 </p>
                 <p style="margin: 0 0 0.75rem 0;">This will permanently delete everything:</p>
                 <ul style="margin: 0 0 0.75rem 1rem; color: var(--text-muted); font-size: 0.85em; list-style: disc;">
-                    <li>All uploaded documents &amp; embeddings</li>
+                    <li>All your documents &amp; embeddings</li>
                     <li>All cached language models</li>
                     <li>All settings and preferences</li>
                 </ul>
@@ -1283,7 +1283,7 @@
                     }
 
                     if (uploadBtnText) {
-                        uploadBtnText.textContent = 'Upload';
+                        uploadBtnText.textContent = 'Load data';
                     }
 
                     if (modelLoadingStatus) {
@@ -1291,7 +1291,7 @@
                         if (state === 'installed') {
                             modelLoadingStatus.textContent = 'AI models are installed. Click Start setup to load them.';
                         } else {
-                            modelLoadingStatus.textContent = 'Download the AI models to enable uploads (first time can take a few minutes).';
+                            modelLoadingStatus.textContent = 'Download the AI models to enable local processing (first time may take a few minutes).';
                         }
                     }
 
@@ -1301,7 +1301,7 @@
                             modelSetupDesc.textContent = 'Click Start setup to load them into the browser.';
                         } else {
                             modelSetupTitle.textContent = 'Set up AI models';
-                            modelSetupDesc.textContent = 'Download the embeddings + LLM once to enable uploads and search. You control when it starts.';
+                            modelSetupDesc.textContent = 'Download the embeddings + LLM once to enable local processing and search. You control when it starts.';
                         }
                     }
 
