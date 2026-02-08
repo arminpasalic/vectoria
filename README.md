@@ -73,7 +73,7 @@ All running **entirely in your browser using your device's hardware** with zero 
 
 ## How to use
 
-### 1. Upload your data
+### 1. Load your data
 Select and load:
 - CSV files (with header row)
 - Excel spreadsheets (.xlsx, .xls)
