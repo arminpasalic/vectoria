@@ -235,7 +235,7 @@ body {
 }
 
 html.light {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 1) 0%, rgba(245, 245, 245, 1) 45%, rgba(235, 235, 235, 1) 100%);
+    background: #F0F0F0;
 }
 
 html.dark {
@@ -1182,29 +1182,112 @@ header {
     position: relative;
 }
 
-/* Upload tab - larger, more UX friendly */
+/* ============================================
+   Upload Tab - Centered focused layout
+   ============================================ */
 #upload-tab {
-    margin-top: 16px;
+    max-width: 640px;
+    margin: 48px auto 80px;
+    padding: 0 24px;
 }
 
-#upload-tab .card-body {
-    padding: 32px 40px;
+@media (max-width: 768px) {
+    #upload-tab {
+        margin: 24px auto 48px;
+        padding: 0 16px;
+    }
 }
 
-#upload-tab .form-group {
-    margin-bottom: 28px;
+/* Hero section */
+.upload-hero {
+    margin-bottom: 36px;
 }
 
-#upload-tab .form-label {
+.upload-hero h2 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text-primary);
+    margin: 0 0 8px 0;
+    line-height: 1.2;
+}
+
+.upload-hero p {
     font-size: 15px;
-    margin-bottom: 10px;
-    font-weight: 600;
+    font-weight: 400;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    margin: 0;
+    max-width: 520px;
 }
 
-#upload-tab .form-control {
-    padding: 14px 18px;
-    font-size: 16px;
+/* Model setup panel */
+.model-setup-panel {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 24px;
+    margin-bottom: 32px;
+    background: var(--surface-subtle);
+    border: 1px solid var(--surface-border);
     border-radius: 10px;
+    transition: border-color var(--transition-medium);
+}
+
+.model-setup-panel-icon {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    font-size: 16px;
+}
+
+html.dark .model-setup-panel {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+html.dark .model-setup-panel-icon {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+}
+
+.model-setup-panel-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.model-setup-panel-text strong {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.model-setup-panel-text p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.model-setup-panel .btn-primary {
+    flex-shrink: 0;
+    padding: 10px 20px;
+    font-size: 13px;
+    min-height: 38px;
+    border-radius: 8px;
+}
+
+/* Form group within upload */
+#upload-tab .form-group {
+    margin-bottom: 0;
 }
 
 /* Custom file input - hides native input */
@@ -1230,37 +1313,53 @@ header {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    padding: 32px 24px;
+    gap: 12px;
+    padding: 48px 32px;
     border: 1.5px dashed var(--surface-border-strong);
     border-radius: 12px;
     background: var(--surface-subtle);
     cursor: pointer;
-    transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+    transition: border-color var(--transition-medium),
+                background var(--transition-medium),
+                box-shadow var(--transition-medium),
+                border-style var(--transition-medium);
     text-align: center;
 }
 
 .file-drop-zone:hover {
     border-color: var(--accent-neutral);
+    border-style: solid;
     background: var(--surface-muted);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+}
+
+html.dark .file-drop-zone {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+html.dark .file-drop-zone:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
 }
 
 .custom-file-input-wrapper.drag-over .file-drop-zone {
     border-color: var(--accent-neutral);
     border-style: solid;
     background: var(--surface-muted);
-    box-shadow: 0 0 0 3px var(--accent-hover-outline);
+    box-shadow: 0 0 0 3px var(--accent-focus-ring);
 }
 
 .file-drop-icon {
-    font-size: 22px;
+    font-size: 24px;
     color: var(--text-muted);
-    transition: color 0.2s ease, transform 0.2s ease;
+    transition: color var(--transition-medium), transform var(--transition-medium);
 }
 
 .file-drop-zone:hover .file-drop-icon {
     color: var(--text-secondary);
-    transform: translateY(-2px);
+    transform: translateY(-3px);
 }
 
 .file-drop-text {
@@ -1270,7 +1369,7 @@ header {
 }
 
 .file-drop-primary {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--text-primary);
 }
@@ -1310,8 +1409,8 @@ header {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    letter-spacing: 0.01em;
-    transition: color 0.15s ease;
+    letter-spacing: 0.02em;
+    margin-top: 4px;
 }
 
 .custom-file-name.has-file {
@@ -1320,73 +1419,241 @@ header {
     font-weight: 600;
 }
 
-#upload-tab select.form-control {
-    padding: 16px 20px;
-    font-size: 16px;
+/* Upload action button */
+.upload-action-btn {
+    width: 100%;
+    margin-top: 16px;
+    padding: 14px 32px;
+    font-size: 15px;
     font-weight: 600;
-    background-size: 20px;
-    background-position: right 16px center;
-    padding-right: 48px;
-    border: 2px solid var(--accent-neutral);
-    background-color: rgba(99, 102, 241, 0.03);
-    cursor: pointer;
+    border-radius: 10px;
+    min-height: 50px;
+    letter-spacing: -0.1px;
+}
+
+#upload-tab #upload-btn:not(:disabled),
+#upload-tab #process-csv-btn.ready-to-process {
+    background: #16A34A;
+    color: #FFFFFF;
+    border-color: transparent;
+    box-shadow: 0 1px 3px rgba(22, 163, 74, 0.2);
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+#upload-tab #upload-btn:not(:disabled):hover,
+#upload-tab #upload-btn:not(:disabled):focus-visible,
+#upload-tab #process-csv-btn.ready-to-process:hover,
+#upload-tab #process-csv-btn.ready-to-process:focus-visible {
+    background: #15803D;
+    box-shadow: 0 2px 8px rgba(22, 163, 74, 0.25);
+}
+
+html.dark .upload-action-btn:disabled {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+    border-color: transparent;
+}
+
+/* Model loading status */
+#model-loading-status {
+    display: block;
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+/* Upload divider */
+.upload-divider {
+    border: none;
+    border-top: 1px solid var(--surface-divider);
+    margin: 32px 0;
+}
+
+html.dark .upload-divider {
+    border-top-color: var(--surface-divider);
+}
+
+/* Secondary actions grid */
+.upload-secondary-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+@media (max-width: 560px) {
+    .upload-secondary-actions {
+        grid-template-columns: 1fr;
+    }
+}
+
+.sample-dataset-card,
+.import-dataset-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px;
+    border: 1px solid var(--surface-border);
+    border-radius: 10px;
+    background: var(--surface-subtle);
+    transition: border-color var(--transition-medium);
+}
+
+.sample-dataset-card:hover,
+.import-dataset-card:hover {
+    border-color: var(--surface-border-strong);
+}
+
+html.dark .sample-dataset-card,
+html.dark .import-dataset-card {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+html.dark .sample-dataset-card:hover,
+html.dark .import-dataset-card:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.sample-dataset-label,
+.import-dataset-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    display: block;
+}
+
+.sample-dataset-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: block;
+    margin-top: 4px;
+}
+
+.sample-dataset-desc,
+.import-dataset-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    display: block;
+    margin-top: 2px;
+    line-height: 1.4;
+}
+
+.import-dataset-desc code {
+    font-size: 12px;
+    padding: 1px 5px;
+    background: var(--surface-muted);
+    border-radius: 3px;
     color: var(--text-primary);
 }
 
-#upload-tab select.form-control:hover {
-    border-color: #4f46e5;
-    background-color: rgba(99, 102, 241, 0.06);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+html.dark .import-dataset-desc code {
+    background: rgba(255, 255, 255, 0.08);
 }
 
-#upload-tab select.form-control:focus {
-    border-color: var(--accent-neutral);
-    box-shadow: 0 0 0 4px var(--accent-focus-ring);
-    background-color: rgba(99, 102, 241, 0.05);
+.sample-dataset-card .btn,
+.import-dataset-card .btn {
+    align-self: flex-start;
+    padding: 8px 18px;
+    font-size: 13px;
+    border-radius: 8px;
+    min-height: 36px;
 }
 
-/* Column Selection UI Enhancement */
+/* Settings button area */
+.upload-settings-link {
+    margin-top: 28px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.upload-settings-btn {
+    padding: 10px 24px;
+    font-size: 13px;
+    border-radius: 8px;
+    min-height: 40px;
+}
+
+.upload-settings-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* Upload format note */
+.upload-format-note {
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+    letter-spacing: 0.01em;
+}
+
+/* Column Selection section */
+.column-selection-section {
+    /* flat layout, no card wrapper */
+}
+
+.step-heading {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+    margin: 0 0 20px 0;
+}
+
+/* Column select dropdown */
 .column-select-group {
     margin-bottom: 24px;
 }
 
 .column-select-label {
     display: block;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 
 @keyframes pulse-border {
     0%, 100% {
-        box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.5);
+        box-shadow: 0 0 0 0 var(--accent-focus-ring);
     }
     50% {
-        box-shadow: 0 0 0 10px rgba(139, 92, 246, 0.3);
+        box-shadow: 0 0 0 8px transparent;
     }
 }
 
 #upload-tab select.form-control.column-select,
 .column-select-group select.column-select {
-    padding: 18px 24px !important;
-    font-size: 16px !important;
-    font-weight: 600 !important;
-    border: 2px solid #8B5CF6 !important;
-    border-radius: 12px !important;
-    background-color: rgba(139, 92, 246, 0.05) !important;
-    color: var(--text-primary) !important;
-    cursor: pointer !important;
-    -webkit-appearance: none !important;
-    -moz-appearance: none !important;
-    appearance: none !important;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%238B5CF6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;
-    background-repeat: no-repeat !important;
-    background-position: right 16px center !important;
-    background-size: 20px !important;
-    padding-right: 52px !important;
+    padding: 16px 20px;
+    font-size: 15px;
+    font-weight: 600;
+    border: 2px solid var(--accent-neutral);
+    border-radius: 10px;
+    background-color: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%238A8F98' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    background-size: 18px;
+    padding-right: 48px;
     animation: pulse-border 2s ease-in-out infinite;
+}
+
+html.dark #upload-tab select.form-control.column-select,
+html.dark .column-select-group select.column-select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23FFFFFF' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
 }
 
 /* Stop pulsing when focused or when a selection has been made */
@@ -1394,139 +1661,135 @@ header {
 .column-select-group select.column-select:focus,
 #upload-tab select.form-control.column-select.has-selection,
 .column-select-group select.column-select.has-selection {
-    animation: none !important;
+    animation: none;
 }
 
 #upload-tab select.form-control.column-select:hover,
 .column-select-group select.column-select:hover {
-    border-color: #7C3AED !important;
-    background-color: rgba(139, 92, 246, 0.1) !important;
-    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2) !important;
-    transform: none !important;
+    border-color: var(--text-secondary);
 }
 
 #upload-tab select.form-control.column-select:focus,
 .column-select-group select.column-select:focus {
-    outline: none !important;
-    border-color: #7C3AED !important;
-    box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.25) !important;
+    outline: none;
+    border-color: var(--accent-neutral);
+    box-shadow: 0 0 0 3px var(--accent-focus-ring);
 }
 
-/* Selected state - when a valid column is chosen */
+/* Selected state - success color */
 #upload-tab select.form-control.column-select.has-selection,
 .column-select-group select.column-select.has-selection {
-    border-color: #10B981 !important;
-    background-color: rgba(16, 185, 129, 0.08) !important;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2310B981' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;
+    border-color: var(--success-color);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2310B981' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
 }
 
-html.dark #upload-tab select.form-control.column-select,
-html.dark .column-select-group select.column-select {
-    background-color: rgba(139, 92, 246, 0.1) !important;
+/* Section reveal animation */
+.column-selection-section[style*="display: block"] {
+    animation: section-reveal 0.3s ease-out;
 }
 
-html.dark #upload-tab select.form-control.column-select:hover,
-html.dark .column-select-group select.column-select:hover {
-    background-color: rgba(139, 92, 246, 0.18) !important;
-    box-shadow: 0 4px 16px rgba(139, 92, 246, 0.35) !important;
+@keyframes section-reveal {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
-html.dark #upload-tab select.form-control.column-select.has-selection,
-html.dark .column-select-group select.column-select.has-selection {
-    background-color: rgba(16, 185, 129, 0.15) !important;
-}
-
-#upload-tab .btn-primary {
-    padding: 14px 32px;
-    font-size: 15px;
-    font-weight: 600;
-    border-radius: 10px;
-    min-height: 48px;
-}
-
-#upload-tab #upload-btn {
-    width: 100%;
-    margin-top: 12px;
-}
-
-#upload-tab #upload-btn:not(:disabled) {
-    background: #16A34A;
-    color: #FFFFFF;
-    border-color: transparent;
-    box-shadow: 0 10px 24px rgba(22, 163, 74, 0.3);
-    transition: background 0.2s ease, box-shadow 0.2s ease;
-}
-
-#upload-tab #upload-btn:not(:disabled):hover,
-#upload-tab #upload-btn:not(:disabled):focus-visible {
-    background: #15803D;
-    box-shadow: 0 12px 28px rgba(22, 163, 74, 0.35);
-}
-
-/* Process button - green when ready (text column selected) */
-#upload-tab #process-csv-btn.ready-to-process {
-    background: #16A34A;
-    color: #FFFFFF;
-    border-color: transparent;
-    box-shadow: 0 10px 24px rgba(22, 163, 74, 0.3);
-}
-
-#upload-tab #process-csv-btn.ready-to-process:hover,
-#upload-tab #process-csv-btn.ready-to-process:focus-visible {
-    background: #15803D;
-    box-shadow: 0 12px 28px rgba(22, 163, 74, 0.35);
-}
-
-#upload-tab .btn-secondary {
-    padding: 14px 28px;
-    font-size: 15px;
-    border-radius: 10px;
-    min-height: 48px;
-}
-
-.sample-dataset-card:hover {
-    border-color: var(--accent-neutral);
-    box-shadow: 0 0 0 3px var(--accent-hover-outline);
-}
-
-.sample-dataset-card .btn-primary {
-    padding: 10px 20px;
-    font-size: 14px;
-    min-height: 40px;
+/* Sample data hint */
+.sample-data-hint {
+    margin-top: 16px;
+    padding: 12px 14px;
+    background: var(--surface-subtle);
     border-radius: 8px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text-secondary);
 }
 
-.model-setup-panel {
+.sample-data-hint i {
+    margin-top: 2px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+html.dark .sample-data-hint {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+/* Large file warning */
+.large-file-warning {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 16px 18px;
-    margin-bottom: 20px;
-    background: var(--surface-overlay), var(--surface-base);
-    border: 1px solid var(--surface-border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-subtle);
-}
-
-.model-setup-panel-text strong {
-    display: block;
-    font-size: 15px;
-    color: var(--text-primary);
-}
-
-.model-setup-panel-text p {
-    margin: 6px 0 0;
-    color: var(--text-secondary);
+    gap: 10px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    border-radius: 8px;
     font-size: 13px;
+    color: var(--warning-color);
+    background: var(--bg-warning);
+    border: 1px solid var(--warning-color);
+    border-left-width: 3px;
 }
 
-#upload-tab .card-header h2 {
-    font-size: 22px;
+.large-file-warning i {
+    flex-shrink: 0;
+    font-size: 14px;
 }
 
-#upload-tab .card-header p {
+/* Data statistics panel */
+.data-stats-panel {
+    margin-bottom: 28px;
+}
+
+.data-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--surface-border);
+    border: 1px solid var(--surface-border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+@media (max-width: 480px) {
+    .data-stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.data-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 16px 20px;
+    background: var(--surface-subtle);
+}
+
+html.dark .data-stats-grid {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.06);
+}
+
+html.dark .data-stat {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.data-stat-value {
     font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.data-stat-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
 }
 
 /* Processing Summary Modal */
@@ -4041,10 +4304,15 @@ html.dark .checkbox-label input[type="checkbox"]:checked+.checkbox-custom::after
 /* Sample data table */
 .sample-data {
     margin-top: 16px;
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-sm);
-    padding: 12px;
-    background: var(--bg-secondary);
+    border: 1px solid var(--surface-border);
+    border-radius: 10px;
+    padding: 16px;
+    background: var(--surface-subtle);
+}
+
+html.dark .sample-data {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.08);
 }
 
 .sample-data h3 {
@@ -4079,14 +4347,23 @@ html.dark .checkbox-label input[type="checkbox"]:checked+.checkbox-custom::after
 }
 
 .sample-table-content th {
-    background: var(--bg-tertiary);
+    background: var(--surface-subtle);
     font-weight: 600;
     color: var(--text-secondary);
 }
 
+html.dark .sample-table-content th {
+    background: rgba(255, 255, 255, 0.04);
+}
+
 .sample-table-content td {
-    background: var(--bg-primary);
+    background: transparent;
     color: var(--text-primary);
+}
+
+.sample-table-content th,
+.sample-table-content td {
+    border-color: var(--surface-border);
 }
 
 /* Process controls */
@@ -4095,10 +4372,6 @@ html.dark .checkbox-label input[type="checkbox"]:checked+.checkbox-custom::after
     align-items: center;
     gap: 12px;
     margin: 16px 0;
-    padding: 12px;
-    background: var(--surface-overlay), var(--surface-base);
-    border: 1px solid var(--surface-border);
-    border-radius: var(--radius-md);
 }
 
 /* === FILTER STATUS BAR & CHIPS === */

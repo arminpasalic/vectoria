@@ -10,7 +10,6 @@ import * as XLSX from 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm';
 export class BrowserFileProcessor {
     constructor() {
         this.supportedFormats = ['csv', 'xlsx', 'xls', 'json', 'txt'];
-        this.maxFileSize = 100 * 1024 * 1024; // 100MB
     }
 
     /**
@@ -19,11 +18,6 @@ export class BrowserFileProcessor {
      * @returns {Promise<Object>} Parsed data with metadata
      */
     async parseFile(file) {
-        // Validate file size
-        if (file.size > this.maxFileSize) {
-            throw new Error(`File too large. Maximum size: ${this._formatFileSize(this.maxFileSize)}`);
-        }
-
         // Get file extension
         const ext = file.name.split('.').pop().toLowerCase();
 

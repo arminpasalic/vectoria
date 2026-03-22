@@ -70,111 +70,135 @@
 
     <main class="container">
         <div id="upload-tab" class="tab-content active" style="display: block;">
-            <div class="card">
-                <div class="card-header">
-                    <h2>1. Load your data file</h2>
-                    <p style="margin: 0.5rem 0 0 0; color: var(--text-secondary); font-size: 0.80rem;"><strong>Browser-first text exploration, clustering and semantic search.</strong> Load your data file and explore semantic clusters with AI-powered search.</p>
+            <div class="upload-hero">
+                <h2>Load your data</h2>
+                <p>Browser-native text exploration, clustering and semantic search. Your data never leaves this device.</p>
+            </div>
+
+            <div id="model-setup-panel" class="model-setup-panel">
+                <div class="model-setup-panel-icon">
+                    <i class="fas fa-microchip"></i>
                 </div>
-                <div class="card-body">
-                    <form id="csv-upload-form" enctype="multipart/form-data">
-                        <div id="model-setup-panel" class="model-setup-panel">
-                            <div class="model-setup-panel-text">
-                                <strong>Set up AI models</strong>
-                                <p>Download the embeddings model & Large Language Model (LLM) to your device once to enable local processing of your data and search. You control when it starts.</p>
-                            </div>
-                            <button type="button" id="start-model-setup-btn" class="btn btn-primary">
-                                Start setup
-                            </button>
-                        </div>
-                        <div class="form-group">
-                            <div class="custom-file-input-wrapper">
-                                <input type="file" id="csv-file" name="file" accept=".csv,.xlsx,.xls,.json,.txt" class="custom-file-input" disabled>
-                                <div class="file-drop-zone">
-                                    <div class="file-drop-icon"><i class="fas fa-cloud-upload-alt"></i></div>
-                                    <div class="file-drop-text">
-                                        <span class="file-drop-primary">Drop your file here</span>
-                                        <span class="file-drop-secondary">or <button type="button" id="custom-file-btn" class="file-browse-link" disabled>browse to select</button></span>
-                                    </div>
-                                    <span id="custom-file-name" class="custom-file-name">CSV, Excel, JSON, TXT</span>
-                                </div>
-                            </div>
-                        </div>
-                        <button type="submit" id="upload-btn" class="btn btn-primary" disabled>
-                            <span id="upload-btn-text">Open and load data</span>
-                        </button>
-                        <small class="form-help" id="model-loading-status" style="display: block; margin-top: 10px; color: var(--text-secondary);">
-                            Download the AI models to enable loading of your data file (first time can take a few minutes).
-                        </small>
-                    </form>
+                <div class="model-setup-panel-text">
+                    <strong>Download AI models</strong>
+                    <p>One-time download of embedding and language models for local processing.</p>
+                </div>
+                <button type="button" id="start-model-setup-btn" class="btn btn-primary">
+                    Start setup
+                </button>
+            </div>
 
-                    <div class="sample-dataset-card" style="margin-top: 28px; position: relative; overflow: hidden; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--surface-subtle); padding: 22px 24px; transition: border-color 0.2s ease, box-shadow 0.2s ease;">
-                        <div style="display: flex; align-items: flex-start; gap: 16px;">
-                            <div style="flex: 1; min-width: 0;">
-                                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                                    <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);">Sample dataset</span>
-                                    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; background: var(--success-color); color: #fff;">Instant</span>
-                                </div>
-                                <div style="font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">Internet Memes &amp; Moments</div>
-                                <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.45;">500+ entries across memes, music, history &amp; more. No setup needed.</div>
+            <form id="csv-upload-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <div class="custom-file-input-wrapper">
+                        <input type="file" id="csv-file" name="file" accept=".csv,.xlsx,.xls,.json,.txt" class="custom-file-input" disabled>
+                        <div class="file-drop-zone">
+                            <div class="file-drop-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+                            <div class="file-drop-text">
+                                <span class="file-drop-primary">Drop your file here</span>
+                                <span class="file-drop-secondary">or <button type="button" id="custom-file-btn" class="file-browse-link" disabled>browse to select</button></span>
                             </div>
-                            <button id="load-sample-btn" class="btn btn-primary" style="flex-shrink: 0; padding: 10px 20px; font-size: 14px; min-height: 40px; border-radius: 8px; align-self: center;">
-                                <span id="load-sample-btn-text">Load sample</span>
-                                <span id="load-sample-spinner" style="display: none;"><i class="fas fa-spinner fa-spin"></i> Loading…</span>
-                            </button>
+                            <span id="custom-file-name" class="custom-file-name">CSV, Excel, JSON, TXT</span>
                         </div>
                     </div>
+                </div>
+                <button type="submit" id="upload-btn" class="btn btn-primary upload-action-btn" disabled>
+                    <span id="upload-btn-text">Open and load data</span>
+                </button>
+                <div class="upload-format-note">Supports file formats: CSV, Excel, JSON, TXT</div>
+                <small class="form-help" id="model-loading-status">
+                    Download the AI models to enable loading of your data file.
+                </small>
+            </form>
 
-                    <div class="form-group" style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-color);">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">
-                            <i class="fas fa-bolt"></i> Skip processing - load saved dataset
-                        </label>
-                        <input type="file" id="import-dataset-file" accept=".vectoria.json,.json" style="display: none;">
-                        <button id="import-dataset-btn" class="btn btn-secondary" style="margin-right: 12px;">
-                            <i class="fas fa-upload"></i> Load saved dataset
-                        </button>
-                        <small class="form-help" style="display: block; margin-top: 8px;">
-                            Load complete datasets. Uses <code>.vectoria.json</code> format.
-                        </small>
+            <hr class="upload-divider">
+
+            <div class="upload-secondary-actions">
+                <div class="sample-dataset-card">
+                    <div class="sample-dataset-info">
+                        <span class="sample-dataset-label">Sample dataset</span>
+                        <span class="sample-dataset-title">Internet Memes &amp; Moments</span>
+                        <span class="sample-dataset-desc">500+ entries across memes, music, history and more. No setup needed.</span>
                     </div>
-                    <div class="form-group" style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-color);">
-                        <button type="button" id="open-advanced-settings" class="btn btn-secondary">
-                            <i class="fas fa-cog"></i> Advanced settings
-                        </button>
-                        <small class="form-help">Configure models, RAG parameters, clustering, and visualization settings</small>
+                    <button id="load-sample-btn" class="btn btn-secondary">
+                        <span id="load-sample-btn-text">Load sample</span>
+                        <span id="load-sample-spinner" style="display: none;"><i class="fas fa-spinner fa-spin"></i> Loading...</span>
+                    </button>
+                </div>
+
+                <div class="import-dataset-card">
+                    <div class="import-dataset-info">
+                        <span class="import-dataset-label">Saved dataset</span>
+                        <span class="import-dataset-desc">Load a previously exported <code>.vectoria.json</code> file</span>
                     </div>
-                    <div id="upload-error" class="alert alert-danger" style="display: none;"></div>
-                    <div id="upload-success" class="alert alert-success" style="display: none;"></div>
-                    <div id="upload-loader" class="loader" style="display: none;"></div>
+                    <input type="file" id="import-dataset-file" accept=".vectoria.json,.json" style="display: none;">
+                    <button id="import-dataset-btn" class="btn btn-secondary">
+                        Import
+                    </button>
                 </div>
             </div>
 
-            <div id="column-selection" class="card" style="display: none;">
-                <div class="card-header">
-                    <h2>2. Select text column & process</h2>
-                </div>
-                <div class="card-body">
-                    <div class="form-group column-select-group">
-                        <label for="text-column-select" class="column-select-label">Text column</label>
-                        <select id="text-column-select" class="form-control column-select">
-                            <option value="">Select a column...</option>
-                        </select>
-                    </div>
+            <div class="upload-settings-link">
+                <button type="button" id="open-advanced-settings" class="btn btn-secondary upload-settings-btn">
+                    <i class="fas fa-cog"></i> Advanced settings
+                </button>
+                <small class="upload-settings-desc">Configure models, RAG parameters, clustering, and visualization</small>
+            </div>
 
-                    <div class="process-controls">
-                        <button id="process-csv-btn" class="btn btn-primary" disabled>Process data</button>
-                        <div id="processing-loader" class="loader" style="display: none;"></div>
-                    </div>
-                    <div id="processing-error" class="alert alert-danger" style="display: none;"></div>
-                    <div id="processing-success" class="alert alert-success" style="display: none;"></div>
+            <div id="upload-error" class="alert alert-danger" style="display: none;"></div>
+            <div id="upload-success" class="alert alert-success" style="display: none;"></div>
+            <div id="upload-loader" class="loader" style="display: none;"></div>
 
-                    <div id="sample-data-container" class="sample-data" style="margin-top: 20px; display: none;">
-                        <h3>Sample data preview</h3>
-                        <hr>
-                        <div id="sample-data-table" class="sample-table"></div>
-                        <div style="margin-top: 16px; padding: 12px 14px; background: var(--bg-secondary, #f8f9fa); border-radius: 8px; display: flex; align-items: flex-start; gap: 10px; font-size: 0.82rem; color: var(--text-secondary);">
-                            <i class="fas fa-info-circle" style="margin-top: 2px; color: var(--primary-color, #6366f1); flex-shrink: 0;"></i>
-                            <span>Every dataset is unique. For best results, explore <b>Advanced Settings</b> to fine-tune the processing to your data's specific structure.</span>
+            <div id="column-selection" class="column-selection-section" style="display: none;">
+                <hr class="upload-divider">
+
+                <div id="data-stats-panel" class="data-stats-panel" style="display: none;">
+                    <div id="large-file-warning" class="large-file-warning" style="display: none;">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>Large file detected. Processing may take longer and use significant memory.</span>
+                    </div>
+                    <div class="data-stats-grid">
+                        <div class="data-stat">
+                            <span class="data-stat-value" id="stat-rows">--</span>
+                            <span class="data-stat-label">Rows</span>
                         </div>
+                        <div class="data-stat">
+                            <span class="data-stat-value" id="stat-columns">--</span>
+                            <span class="data-stat-label">Columns</span>
+                        </div>
+                        <div class="data-stat">
+                            <span class="data-stat-value" id="stat-file-type">--</span>
+                            <span class="data-stat-label">Format</span>
+                        </div>
+                        <div class="data-stat">
+                            <span class="data-stat-value" id="stat-file-name">--</span>
+                            <span class="data-stat-label">File</span>
+                        </div>
+                    </div>
+                </div>
+
+                <h3 class="step-heading">Select text column</h3>
+                <div class="form-group column-select-group">
+                    <label for="text-column-select" class="column-select-label">Text column</label>
+                    <select id="text-column-select" class="form-control column-select">
+                        <option value="">Select a column...</option>
+                    </select>
+                </div>
+
+                <div class="process-controls">
+                    <button id="process-csv-btn" class="btn btn-primary upload-action-btn" disabled>Process data</button>
+                    <div id="processing-loader" class="loader" style="display: none;"></div>
+                </div>
+                <div id="processing-error" class="alert alert-danger" style="display: none;"></div>
+                <div id="processing-success" class="alert alert-success" style="display: none;"></div>
+
+                <div id="sample-data-container" class="sample-data" style="margin-top: 20px; display: none;">
+                    <h3>Sample data preview</h3>
+                    <hr>
+                    <div id="sample-data-table" class="sample-table"></div>
+                    <div class="sample-data-hint">
+                        <i class="fas fa-info-circle"></i>
+                        <span>For best results, explore <b>Advanced Settings</b> to fine-tune processing for your data.</span>
                     </div>
                 </div>
             </div>

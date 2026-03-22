@@ -2043,7 +2043,8 @@ async function handleCSVColumnsAPI(options) {
             sample_data: parsedData.data.slice(0, 5), // First 5 rows
             filename: file.name,
             file_type: fileType,  // Add file_type to response (vectoria.js expects this)
-            num_rows: parsedData.rowCount
+            num_rows: parsedData.rowCount,
+            file_size: file.size
         };
 
         return new Response(JSON.stringify(response), {

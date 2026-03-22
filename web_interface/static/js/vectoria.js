@@ -1092,6 +1092,9 @@ function initCSVUpload() {
         const sampleDataTable = document.getElementById('sample-data-table');
         sampleDataTable.innerHTML = '';
         document.getElementById('sample-data-container').style.display = 'none';
+
+        const statsPanel = document.getElementById('data-stats-panel');
+        if (statsPanel) statsPanel.style.display = 'none';
     }
 
     uploadForm.addEventListener('submit', function(e) {
@@ -1136,20 +1139,23 @@ function initCSVUpload() {
         .then(data => {
             // Hide loader
             uploadLoader.style.display = 'none';
-            
+
             // Show success message
             uploadSuccess.textContent = `File uploaded successfully (${data.file_type.toUpperCase()}). Please select a text column.`;
             uploadSuccess.style.display = 'block';
-            
+
             // Show column selection form
             columnSelectionDiv.style.display = 'block';
-            
+
+            // Populate data statistics panel
+            populateDataStats(data);
+
             // Populate column select dropdown
             populateColumnSelect(data.columns);
-            
+
             // Display sample data
             displaySampleData(data.sample_data);
-            
+
             // Keep process button disabled until column is selected
             processBtn.disabled = true;
         })
@@ -1499,6 +1505,35 @@ function transitionToExplore() {
             uploadSection.classList.remove('fade-out-up');
         }
     }, 700);
+}
+
+// Function to populate data statistics panel
+function populateDataStats(data) {
+    const panel = document.getElementById('data-stats-panel');
+    if (!panel) return;
+
+    const numRows = data.num_rows || (data.sample_data ? '~' + data.sample_data.length : '--');
+    const numCols = data.columns ? data.columns.length : '--';
+    const fileType = data.file_type ? data.file_type.toUpperCase() : '--';
+    const fileName = data.filename || '--';
+
+    const statRows = document.getElementById('stat-rows');
+    const statCols = document.getElementById('stat-columns');
+    const statType = document.getElementById('stat-file-type');
+    const statName = document.getElementById('stat-file-name');
+
+    if (statRows) statRows.textContent = typeof numRows === 'number' ? numRows.toLocaleString() : numRows;
+    if (statCols) statCols.textContent = numCols;
+    if (statType) statType.textContent = fileType;
+    if (statName) statName.textContent = fileName;
+
+    // Show large file warning if > 100MB
+    const warningEl = document.getElementById('large-file-warning');
+    if (warningEl) {
+        warningEl.style.display = (data.file_size && data.file_size > 100 * 1024 * 1024) ? 'flex' : 'none';
+    }
+
+    panel.style.display = 'block';
 }
 
 // Function to populate column select dropdown
