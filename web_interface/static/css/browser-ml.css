@@ -305,6 +305,27 @@
     font-weight: 600;
 }
 
+.processing-tab-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 1rem;
+    padding: 12px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #CA8A04;
+    background: rgba(202, 138, 4, 0.08);
+    border: 1px solid rgba(202, 138, 4, 0.2);
+}
+
+.processing-tab-hint i {
+    flex-shrink: 0;
+    margin-top: 1px;
+    font-size: 13px;
+    color: #CA8A04;
+}
+
 /* Loading Spinner */
 .loading-spinner {
     display: inline-block;

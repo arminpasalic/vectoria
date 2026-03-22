@@ -1484,6 +1484,10 @@ function showProcessingModal() {
                     <div id="processing-progress-bar" class="progress-fill"></div>
                 </div>
                 <div id="processing-message" class="processing-message">Starting...</div>
+                <div id="processing-tab-hint" class="processing-tab-hint">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Do not close this tab. You may minimize the browser during embeddings processing, but UMAP dimensionality reduction and HDBSCAN clustering require this tab to stay active and in the foreground.</span>
+                </div>
             </div>
         </div>
     `;
@@ -1494,6 +1498,13 @@ function showProcessingModal() {
 
     // Prevent background scrolling while processing modal is open
     document.body.classList.add('ml-modal-open');
+
+    // Warn user if they try to close or navigate away during processing
+    window._processingBeforeUnload = function(e) {
+        e.preventDefault();
+        e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', window._processingBeforeUnload);
 }
 
 // Smart throttling for smooth updates without blocking important changes
@@ -1715,6 +1726,12 @@ function hideProcessingModal() {
     pendingProgress = null;
 
     document.body.classList.remove('ml-modal-open');
+
+    // Remove beforeunload warning
+    if (window._processingBeforeUnload) {
+        window.removeEventListener('beforeunload', window._processingBeforeUnload);
+        delete window._processingBeforeUnload;
+    }
 }
 
 function getVisibleIndexForStage(stageId) {

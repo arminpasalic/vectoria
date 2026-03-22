@@ -1586,6 +1586,18 @@ html.dark .import-dataset-desc code {
     color: var(--text-muted);
 }
 
+/* Upload success/error alerts */
+#upload-tab #upload-success {
+    margin-top: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#upload-tab #upload-success i {
+    flex-shrink: 0;
+}
+
 /* Upload format note */
 .upload-format-note {
     margin-top: 12px;

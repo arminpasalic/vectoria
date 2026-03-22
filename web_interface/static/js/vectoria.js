@@ -1140,8 +1140,8 @@ function initCSVUpload() {
             // Hide loader
             uploadLoader.style.display = 'none';
 
-            // Show success message
-            uploadSuccess.textContent = `File uploaded successfully (${data.file_type.toUpperCase()}). Please select a text column.`;
+            // Show success feedback
+            uploadSuccess.innerHTML = '<i class="fas fa-check-circle"></i> File loaded — select a text column below to continue.';
             uploadSuccess.style.display = 'block';
 
             // Show column selection form
@@ -1158,6 +1158,11 @@ function initCSVUpload() {
 
             // Keep process button disabled until column is selected
             processBtn.disabled = true;
+
+            // Scroll to the column selection section
+            setTimeout(() => {
+                columnSelectionDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
         })
         .catch(error => {
             // Hide loader
