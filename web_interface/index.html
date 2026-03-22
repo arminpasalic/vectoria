@@ -87,23 +87,42 @@
                             </button>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Select a file:</label>
                             <div class="custom-file-input-wrapper">
                                 <input type="file" id="csv-file" name="file" accept=".csv,.xlsx,.xls,.json,.txt" class="custom-file-input" disabled>
-                                <button type="button" id="custom-file-btn" class="btn btn-file-select" disabled>
-                                    <i class="fas fa-folder-open"></i> Choose file
-                                </button>
-                                <span id="custom-file-name" class="custom-file-name">No file selected</span>
+                                <div class="file-drop-zone">
+                                    <div class="file-drop-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+                                    <div class="file-drop-text">
+                                        <span class="file-drop-primary">Drop your file here</span>
+                                        <span class="file-drop-secondary">or <button type="button" id="custom-file-btn" class="file-browse-link" disabled>browse to select</button></span>
+                                    </div>
+                                    <span id="custom-file-name" class="custom-file-name">CSV, Excel, JSON, TXT</span>
+                                </div>
                             </div>
-                            <small class="form-help">Supported formats: CSV, Excel, JSON, TXT</small>
                         </div>
                         <button type="submit" id="upload-btn" class="btn btn-primary" disabled>
-                            <span id="upload-btn-text">Load data</span>
+                            <span id="upload-btn-text">Open and load data</span>
                         </button>
                         <small class="form-help" id="model-loading-status" style="display: block; margin-top: 10px; color: var(--text-secondary);">
                             Download the AI models to enable loading of your data file (first time can take a few minutes).
                         </small>
                     </form>
+
+                    <div class="sample-dataset-card" style="margin-top: 28px; position: relative; overflow: hidden; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--surface-subtle); padding: 22px 24px; transition: border-color 0.2s ease, box-shadow 0.2s ease;">
+                        <div style="display: flex; align-items: flex-start; gap: 16px;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                                    <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);">Sample dataset</span>
+                                    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; background: var(--success-color); color: #fff;">Instant</span>
+                                </div>
+                                <div style="font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">Internet Memes &amp; Moments</div>
+                                <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.45;">500+ entries across memes, music, history &amp; more. No setup needed.</div>
+                            </div>
+                            <button id="load-sample-btn" class="btn btn-primary" style="flex-shrink: 0; padding: 10px 20px; font-size: 14px; min-height: 40px; border-radius: 8px; align-self: center;">
+                                <span id="load-sample-btn-text">Load sample</span>
+                                <span id="load-sample-spinner" style="display: none;"><i class="fas fa-spinner fa-spin"></i> Loading…</span>
+                            </button>
+                        </div>
+                    </div>
 
                     <div class="form-group" style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-color);">
                         <label style="display: block; margin-bottom: 8px; font-weight: 600;">
@@ -1287,7 +1306,7 @@
                     }
 
                     if (uploadBtnText) {
-                        uploadBtnText.textContent = 'Load data';
+                        uploadBtnText.textContent = 'Open and load data';
                     }
 
                     if (modelLoadingStatus) {

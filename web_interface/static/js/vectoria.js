@@ -1007,8 +1007,19 @@ function initCSVUpload() {
                 customFileName.textContent = this.files[0].name;
                 customFileName.classList.add('has-file');
             } else {
-                customFileName.textContent = 'No file selected';
+                customFileName.textContent = 'CSV, Excel, JSON, TXT';
                 customFileName.classList.remove('has-file');
+            }
+        });
+    }
+
+    // Click anywhere on the drop zone to open file picker
+    const fileDropZone = document.querySelector('.file-drop-zone');
+    if (fileDropZone && fileInput) {
+        fileDropZone.addEventListener('click', function(e) {
+            if (e.target.closest('.file-browse-link')) return; // let the browse link handle its own click
+            if (!fileInput.disabled) {
+                fileInput.click();
             }
         });
     }
@@ -7472,6 +7483,64 @@ function initializeExportImportHandlers() {
 
             // Reset file input
             e.target.value = '';
+        });
+    }
+
+    // Sample Dataset Button
+    const loadSampleBtn = document.getElementById('load-sample-btn');
+    if (loadSampleBtn) {
+        loadSampleBtn.addEventListener('click', async () => {
+            const btnText = document.getElementById('load-sample-btn-text');
+            const spinner = document.getElementById('load-sample-spinner');
+
+            try {
+                btnText.style.display = 'none';
+                spinner.style.display = 'inline';
+                loadSampleBtn.disabled = true;
+
+                const response = await fetch('static/samples/sampledata.json');
+                if (!response.ok) {
+                    throw new Error('Sample dataset not found. See static/samples/README.md to generate it.');
+                }
+
+                const blob = await response.blob();
+                const file = new File([blob], 'sampledata.json', { type: 'application/json' });
+
+                if (typeof importDataset !== 'function') {
+                    throw new Error('Import function not available. Please refresh the page.');
+                }
+
+                const result = await importDataset(file);
+
+                if (result.success) {
+                    await updateVisualizationWithLoadedData(result.data);
+
+                    if (window.loadMetadataFromProcessedData) {
+                        try {
+                            await window.loadMetadataFromProcessedData();
+                        } catch (err) {
+                            console.error('Metadata load failed after sample import:', err);
+                        }
+                    }
+
+                    if (window.populateRAGMetadataFields) {
+                        try {
+                            await window.populateRAGMetadataFields();
+                        } catch (err) {
+                            console.error('RAG metadata population failed after sample import:', err);
+                        }
+                    }
+
+                    activateTab('explore-tab');
+                }
+            } catch (error) {
+                console.error('❌ Sample dataset load failed:', error);
+                showToast(error.message, 'error');
+            } finally {
+                btnText.style.display = 'inline';
+                spinner.style.display = 'none';
+                loadSampleBtn.disabled = false;
+            }
         });
     }
 

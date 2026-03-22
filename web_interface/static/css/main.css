@@ -1207,21 +1207,9 @@ header {
     border-radius: 10px;
 }
 
-/* Custom file input - hides native "No file chosen" text */
+/* Custom file input - hides native input */
 .custom-file-input-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 18px;
-    border: 2px solid var(--accent-neutral);
-    background: rgba(99, 102, 241, 0.03);
-    border-radius: 10px;
-    transition: border-color 0.2s, background 0.2s;
-}
-
-.custom-file-input-wrapper.drag-over {
-    border: 2px dashed var(--accent-primary, #6366f1);
-    background: rgba(99, 102, 241, 0.10);
+    position: relative;
 }
 
 .custom-file-input {
@@ -1236,61 +1224,100 @@ header {
     border: 0;
 }
 
-.btn-file-select {
-    padding: 12px 20px;
-    font-size: 15px;
-    font-weight: 600;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    display: inline-flex;
+/* Drop zone */
+.file-drop-zone {
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
+    justify-content: center;
+    gap: 10px;
+    padding: 32px 24px;
+    border: 1.5px dashed var(--surface-border-strong);
+    border-radius: 12px;
+    background: var(--surface-subtle);
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+    text-align: center;
 }
 
-.btn-file-select:disabled {
+.file-drop-zone:hover {
+    border-color: var(--accent-neutral);
+    background: var(--surface-muted);
+}
+
+.custom-file-input-wrapper.drag-over .file-drop-zone {
+    border-color: var(--accent-neutral);
+    border-style: solid;
+    background: var(--surface-muted);
+    box-shadow: 0 0 0 3px var(--accent-hover-outline);
+}
+
+.file-drop-icon {
+    font-size: 22px;
+    color: var(--text-muted);
+    transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.file-drop-zone:hover .file-drop-icon {
+    color: var(--text-secondary);
+    transform: translateY(-2px);
+}
+
+.file-drop-text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.file-drop-primary {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.file-drop-secondary {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.file-browse-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+    transition: color 0.15s ease;
+}
+
+.file-browse-link:not(:disabled):hover {
+    color: var(--text-primary);
+}
+
+.file-browse-link:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-}
-
-/* Light mode */
-html.light .btn-file-select {
-    background: linear-gradient(135deg, #1f2937, #374151);
-    color: white;
-}
-
-html.light .btn-file-select:not(:disabled):hover {
-    background: linear-gradient(135deg, #111827, #1f2937);
-    box-shadow: 0 4px 12px rgba(31, 41, 55, 0.3);
-    transform: translateY(-1px);
-}
-
-/* Dark mode */
-html.dark .btn-file-select {
-    background: #FFFFFF;
-    color: #000000;
-}
-
-html.dark .btn-file-select:not(:disabled):hover {
-    background: #E6E6E6;
-    box-shadow: 0 4px 12px rgba(255, 255, 255, 0.35);
-    transform: translateY(-1px);
+    text-decoration: none;
 }
 
 .custom-file-name {
-    font-size: 15px;
-    color: var(--text-secondary);
+    font-size: 12px;
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    flex: 1;
+    letter-spacing: 0.01em;
+    transition: color 0.15s ease;
 }
 
 .custom-file-name.has-file {
+    font-size: 13px;
     color: var(--text-primary);
-    font-weight: 500;
+    font-weight: 600;
 }
 
 #upload-tab select.form-control {
@@ -1410,11 +1437,16 @@ html.dark .column-select-group select.column-select.has-selection {
 }
 
 #upload-tab .btn-primary {
-    padding: 16px 32px;
-    font-size: 16px;
+    padding: 14px 32px;
+    font-size: 15px;
     font-weight: 600;
     border-radius: 10px;
-    min-height: 52px;
+    min-height: 48px;
+}
+
+#upload-tab #upload-btn {
+    width: 100%;
+    margin-top: 12px;
 }
 
 #upload-tab #upload-btn:not(:disabled) {
@@ -1422,6 +1454,7 @@ html.dark .column-select-group select.column-select.has-selection {
     color: #FFFFFF;
     border-color: transparent;
     box-shadow: 0 10px 24px rgba(22, 163, 74, 0.3);
+    transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 
 #upload-tab #upload-btn:not(:disabled):hover,
@@ -1449,6 +1482,18 @@ html.dark .column-select-group select.column-select.has-selection {
     font-size: 15px;
     border-radius: 10px;
     min-height: 48px;
+}
+
+.sample-dataset-card:hover {
+    border-color: var(--accent-neutral);
+    box-shadow: 0 0 0 3px var(--accent-hover-outline);
+}
+
+.sample-dataset-card .btn-primary {
+    padding: 10px 20px;
+    font-size: 14px;
+    min-height: 40px;
+    border-radius: 8px;
 }
 
 .model-setup-panel {

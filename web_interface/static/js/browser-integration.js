@@ -502,9 +502,9 @@ function enableUploadUI() {
         const hasFile = !!(fileInput && fileInput.files && fileInput.files.length > 0);
         uploadBtn.disabled = !hasFile;
         if (uploadBtnText) {
-            uploadBtnText.textContent = 'Load data';
+            uploadBtnText.textContent = 'Open and load data';
         } else {
-            uploadBtn.textContent = 'Load data';
+            uploadBtn.textContent = 'Open and load data';
         }
     }
 

@@ -207,7 +207,8 @@ def run_hdbscan(data, min_cluster_size, min_samples, metric, documents=None, key
         min_cluster_size=min_cluster_size,
         min_samples=min_samples,
         metric=metric,
-        algorithm='auto'
+        algorithm='auto',
+        cluster_selection_method='leaf'
     )
 
     labels = model.fit_predict(arr)

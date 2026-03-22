@@ -1,1 +1,8 @@
 emsdk
+.DS_Store
+server.key
+server.crt
+start-https.sh
+start-network.js
+vercel.json
+LLM_CLEARANCE.md
