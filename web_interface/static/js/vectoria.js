@@ -182,20 +182,41 @@ function resolvePointForResult(result) {
     return null;
 }
 
-function applyThemePreference(theme) {
+function applyThemePreference(theme, skipTransition) {
     const normalized = theme === 'dark' ? 'dark' : 'light';
     const htmlElement = document.documentElement;
     if (!htmlElement) return;
 
-    htmlElement.classList.remove('light', 'dark'); // Remove both light/dark classes
-    htmlElement.classList.add(normalized); // Add the new class
-    htmlElement.setAttribute('data-theme', normalized); // Set data-theme attribute
-
-    const toggleBtn = document.getElementById('theme-toggle');
-    if (toggleBtn) {
-        toggleBtn.classList.toggle('is-dark', normalized === 'dark');
-        toggleBtn.setAttribute('aria-label', normalized === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    // Smooth crossfade: overlay the old theme's background color, then fade it out
+    if (!skipTransition) {
+        const oldBg = getComputedStyle(document.body).backgroundColor;
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `position:fixed;inset:0;z-index:99999;background:${oldBg};pointer-events:none;transition:opacity 0.3s ease;opacity:1;`;
+        document.body.appendChild(overlay);
+        // Force layout so the overlay is painted before we start fading
+        overlay.offsetHeight; // eslint-disable-line no-unused-expressions
+        requestAnimationFrame(() => {
+            overlay.style.opacity = '0';
+            overlay.addEventListener('transitionend', () => overlay.remove(), { once: true });
+            // Safety cleanup
+            setTimeout(() => { if (overlay.parentNode) overlay.remove(); }, 500);
+        });
     }
+
+    htmlElement.classList.remove('light', 'dark');
+    htmlElement.classList.add(normalized);
+    htmlElement.setAttribute('data-theme', normalized);
+
+    // Update both theme toggle icon buttons
+    ['theme-toggle', 'header-theme-toggle'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        const icon = btn.querySelector('i');
+        if (icon) {
+            icon.className = normalized === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+        }
+        btn.setAttribute('aria-label', normalized === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    });
 
     updateLogoForTheme(normalized);
 
@@ -244,19 +265,26 @@ function initThemeToggle() {
 
     // Apply initial theme based on the class set by the early script
     const currentTheme = htmlElement.classList.contains('dark') ? 'dark' : 'light';
-    applyThemePreference(currentTheme); // This will correctly set the button icon etc.
+    applyThemePreference(currentTheme, true); // Skip transition on initial load
+
+    const themeClickHandler = () => {
+        const nextTheme = htmlElement.classList.contains('dark') ? 'light' : 'dark';
+        applyThemePreference(nextTheme);
+        try {
+            localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+        } catch (error) {
+            console.warn('Unable to persist theme preference', error);
+        }
+    };
 
     const toggleBtn = document.getElementById('theme-toggle');
     if (toggleBtn) {
-        toggleBtn.addEventListener('click', () => {
-            const nextTheme = htmlElement.classList.contains('dark') ? 'light' : 'dark';
-            applyThemePreference(nextTheme);
-            try {
-                localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-            } catch (error) {
-                console.warn('Unable to persist theme preference', error);
-            }
-        });
+        toggleBtn.addEventListener('click', themeClickHandler);
+    }
+
+    const headerBtn = document.getElementById('header-theme-toggle');
+    if (headerBtn) {
+        headerBtn.addEventListener('click', themeClickHandler);
     }
 }
 
@@ -695,8 +723,8 @@ function refreshClusterDisplays() {
 
 // Filter by a specific cluster - programmatically select cluster_label filter and apply
 function filterByCluster(clusterId) {
-    // Build possible cluster label values (metadata stores "Noise" for -1, "Cluster X" for others)
-    const clusterLabelValue = clusterId === -1 ? 'Noise' : `Cluster ${clusterId}`;
+    // Build possible cluster label values (metadata stores "Outlier" for -1, "Cluster X" for others)
+    const clusterLabelValue = clusterId === -1 ? 'Outlier' : `Cluster ${clusterId}`;
 
     // Try to find cluster_label filter first, then fall back to cluster filter
     let filterItem = document.querySelector('.metadata-filter-item[data-field="cluster_label"]');
@@ -955,6 +983,11 @@ function activateTab(tabId) {
         targetContent.style.display = 'block';
     }
     
+    // Always enable scrolling when leaving upload initial view
+    if (tabId === 'explore-tab') {
+        document.body.classList.add('upload-scrollable');
+    }
+
     // Load data for the explore tab even if no button exists
     if (tabId === 'explore-tab') {
         try { loadVisualizationData(); } catch (e) { console.error(e); }
@@ -1075,7 +1108,10 @@ function initCSVUpload() {
             customFileName.textContent = 'No file selected';
             customFileName.classList.remove('has-file');
         }
-        
+
+        // Restore no-scroll initial state
+        document.body.classList.remove('upload-scrollable');
+
         uploadError.style.display = 'none';
         uploadSuccess.style.display = 'none';
         uploadLoader.style.display = 'none';
@@ -1143,6 +1179,9 @@ function initCSVUpload() {
             // Show success feedback
             uploadSuccess.innerHTML = '<i class="fas fa-check-circle"></i> File loaded — select a text column below to continue.';
             uploadSuccess.style.display = 'block';
+
+            // Enable scrolling now that content overflows
+            document.body.classList.add('upload-scrollable');
 
             // Show column selection form
             columnSelectionDiv.style.display = 'block';
@@ -1536,6 +1575,82 @@ function populateDataStats(data) {
     const warningEl = document.getElementById('large-file-warning');
     if (warningEl) {
         warningEl.style.display = (data.file_size && data.file_size > 100 * 1024 * 1024) ? 'flex' : 'none';
+    }
+
+    // Summary line
+    const summaryEl = document.getElementById('data-stats-summary');
+    if (summaryEl && data.column_stats) {
+        const textCols = data.column_stats.filter(c => c.type === 'text').length;
+        const numCols = data.column_stats.filter(c => c.type === 'numeric').length;
+        const mixedCols = data.column_stats.filter(c => c.type === 'mixed').length;
+        const emptyCols = data.column_stats.filter(c => c.type === 'empty').length;
+        const missingCols = data.column_stats.filter(c => c.fillRate < 1).length;
+
+        let parts = [];
+        if (textCols > 0) parts.push(`${textCols} text`);
+        if (numCols > 0) parts.push(`${numCols} numeric`);
+        if (mixedCols > 0) parts.push(`${mixedCols} mixed`);
+        if (emptyCols > 0) parts.push(`${emptyCols} empty`);
+
+        let html = parts.join(', ') + ' column' + (data.column_stats.length !== 1 ? 's' : '');
+        if (missingCols > 0) {
+            html += ` &middot; ${missingCols} with missing values`;
+        }
+        if (data.duplicate_count > 0) {
+            html += `<div class="data-stats-duplicates"><i class="fas fa-copy"></i> ${data.duplicate_count.toLocaleString()} duplicate row${data.duplicate_count !== 1 ? 's' : ''} detected</div>`;
+        }
+        summaryEl.innerHTML = html;
+        summaryEl.style.display = 'block';
+    }
+
+    // Column details table
+    const detailsEl = document.getElementById('data-column-details');
+    const tableBody = document.querySelector('#data-column-table tbody');
+    if (detailsEl && tableBody && data.column_stats) {
+        tableBody.innerHTML = '';
+        data.column_stats.forEach(col => {
+            const tr = document.createElement('tr');
+
+            // Column name
+            const tdName = document.createElement('td');
+            tdName.textContent = col.name;
+            tdName.style.fontWeight = '500';
+            tr.appendChild(tdName);
+
+            // Type badge
+            const tdType = document.createElement('td');
+            tdType.innerHTML = `<span class="col-type-badge col-type-${col.type}">${col.type}</span>`;
+            tr.appendChild(tdType);
+
+            // Fill rate
+            const tdFill = document.createElement('td');
+            const pct = Math.round(col.fillRate * 100);
+            const fillClass = pct < 50 ? 'low' : pct < 90 ? 'mid' : '';
+            tdFill.innerHTML = `<span class="fill-rate-bar"><span class="fill-rate-bar-track"><span class="fill-rate-bar-fill ${fillClass}" style="width:${pct}%"></span></span>${pct}%</span>`;
+            tr.appendChild(tdFill);
+
+            // Unique count
+            const tdUnique = document.createElement('td');
+            tdUnique.textContent = col.uniqueCount != null ? col.uniqueCount.toLocaleString() : '--';
+            tr.appendChild(tdUnique);
+
+            // Details
+            const tdDetails = document.createElement('td');
+            let details = [];
+            if (col.textStats) {
+                details.push(`len: ${col.textStats.minLen}–${col.textStats.maxLen}, avg ${col.textStats.avgLen}`);
+            }
+            if (col.numericStats) {
+                details.push(`${col.numericStats.min}–${col.numericStats.max}, μ ${col.numericStats.mean}, med ${col.numericStats.median}`);
+            }
+            tdDetails.textContent = details.join(' | ') || '—';
+            tdDetails.style.color = 'var(--text-muted)';
+            tdDetails.style.fontSize = '11px';
+            tr.appendChild(tdDetails);
+
+            tableBody.appendChild(tr);
+        });
+        detailsEl.style.display = 'block';
     }
 
     panel.style.display = 'block';
@@ -5929,7 +6044,7 @@ function createFilterUI(field) {
                         if (clusterMatch) {
                             const clusterId = parseInt(clusterMatch[1], 10);
                             displayValue = escapeHtml(getClusterName(clusterId));
-                        } else if (String(value).toLowerCase() === 'outlier') {
+                        } else if (String(value).toLowerCase() === 'outlier' || String(value).toLowerCase() === 'noise') {
                             displayValue = 'Outlier';
                         }
                     }

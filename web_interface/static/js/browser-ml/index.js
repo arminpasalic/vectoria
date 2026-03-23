@@ -468,7 +468,7 @@ export class BrowserMLPipeline {
 
                 const clusterId = clusters[idx];
                 doc.metadata.cluster = clusterId;
-                doc.metadata.cluster_label = clusterId === -1 ? 'Noise' : `Cluster ${clusterId}`;
+                doc.metadata.cluster_label = clusterId === -1 ? 'Outlier' : `Cluster ${clusterId}`;
 
                 if (probabilities && probabilities[idx] !== undefined) {
                     doc.metadata.cluster_probability = probabilities[idx];
@@ -726,7 +726,7 @@ export class BrowserMLPipeline {
                 }
                 if (doc.metadata.cluster === undefined && data.clusters[idx] !== undefined) {
                     doc.metadata.cluster = data.clusters[idx];
-                    doc.metadata.cluster_label = data.clusters[idx] === -1 ? 'Noise' : `Cluster ${data.clusters[idx]}`;
+                    doc.metadata.cluster_label = data.clusters[idx] === -1 ? 'Outlier' : `Cluster ${data.clusters[idx]}`;
                 }
             });
         }

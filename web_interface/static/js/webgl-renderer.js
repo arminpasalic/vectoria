@@ -28,6 +28,7 @@ class WebGLRenderer {
         this.outlineData = null;
         this.coordIndexMap = new Map(); // "x,y" -> index
         this.docIndexMap = new Map();   // doc_id -> index
+        this.outliersHidden = false;
         
         // Fallback to Canvas 2D if WebGL not available
         this.useFallback = false;
@@ -468,6 +469,7 @@ class WebGLRenderer {
             colors,
             baseColors,
             sizes,
+            baseSizes: new Float32Array(sizes),
             opacities,
             baseOpacities,
             isOutlier: outlierMask
@@ -599,11 +601,17 @@ class WebGLRenderer {
         }
 
         if (!(dimOthers || toHighlight.size > 0)) {
+            const resetOpacities = new Float32Array(baseOpacities);
+            if (this.outliersHidden && this.pointData.isOutlier) {
+                for (let i = 0; i < count; i++) {
+                    if (this.pointData.isOutlier[i]) resetOpacities[i] = 0.0;
+                }
+            }
             this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.opacity);
-            this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, baseOpacities);
+            this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, resetOpacities);
             this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.color);
             this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, baseColors);
-            this.pointData.opacities = new Float32Array(baseOpacities);
+            this.pointData.opacities = resetOpacities;
             this.pointData.colors = new Uint8Array(baseColors);
             this.needsRedraw = true;
             return;
@@ -624,7 +632,7 @@ class WebGLRenderer {
             }
 
             if (this.pointData.isOutlier && this.pointData.isOutlier[i]) {
-                opacities[i] = baseOpacities[i] || 0.2;
+                opacities[i] = this.outliersHidden ? 0.0 : (baseOpacities[i] || 0.2);
                 const baseOffset = i * 4;
                 colors[baseOffset] = baseColors[baseOffset];
                 colors[baseOffset + 1] = baseColors[baseOffset + 1];
@@ -647,6 +655,32 @@ class WebGLRenderer {
         this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, colors);
         this.pointData.opacities = opacities;
         this.pointData.colors = colors;
+        this.needsRedraw = true;
+    }
+
+    // Hide or show outlier (noise) points
+    setOutliersHidden(hidden) {
+        if (this.useFallback || !this.pointData) return;
+        this.outliersHidden = hidden;
+        const count = this.pointData.count;
+        const baseOpacities = this.pointData.baseOpacities;
+        const opacities = new Float32Array(this.pointData.opacities);
+        const sizes = new Float32Array(this.pointData.sizes);
+        const baseSizes = this.pointData.baseSizes;
+
+        for (let i = 0; i < count; i++) {
+            if (this.pointData.isOutlier && this.pointData.isOutlier[i]) {
+                opacities[i] = hidden ? 0.0 : (baseOpacities[i] || 0.2);
+                sizes[i] = hidden ? 0.0 : (baseSizes ? baseSizes[i] : 4);
+            }
+        }
+
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.opacity);
+        this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, opacities);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.size);
+        this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, sizes);
+        this.pointData.opacities = opacities;
+        this.pointData.sizes = sizes;
         this.needsRedraw = true;
     }
 

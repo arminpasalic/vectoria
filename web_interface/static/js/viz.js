@@ -289,6 +289,7 @@ class CanvasVisualization {
         const toggleLabelsBtn = document.getElementById('toggle-labels-btn');
         const lassoSelectBtn = document.getElementById('lasso-select-btn');
         const screenshotBtn = document.getElementById('screenshot-btn');
+        const toggleOutliersBtn = document.getElementById('toggle-outliers-btn');
 
         if (zoomInBtn) {
             zoomInBtn.addEventListener('click', () => this.zoomIn());
@@ -326,6 +327,21 @@ class CanvasVisualization {
             screenshotBtn.addEventListener('click', () => this.takeScreenshot());
         }
 
+        if (toggleOutliersBtn) {
+            this.outliersHidden = false;
+            toggleOutliersBtn.addEventListener('click', () => {
+                this.outliersHidden = !this.outliersHidden;
+                toggleOutliersBtn.classList.toggle('active', this.outliersHidden);
+                toggleOutliersBtn.setAttribute('data-label', this.outliersHidden ? 'Show outliers' : 'Hide outliers');
+                // Update WebGL renderer if available (EnhancedCanvasVisualization)
+                if (this.webglRenderer && typeof this.webglRenderer.setOutliersHidden === 'function') {
+                    this.webglRenderer.setOutliersHidden(this.outliersHidden);
+                }
+                // Always request a re-render for Canvas2D fallback path
+                this.requestRender();
+            });
+        }
+
         // Setup hover labels for all control buttons
         this.setupHoverLabels();
 
@@ -342,7 +358,8 @@ class CanvasVisualization {
             'fullscreen-btn': 'Enter fullscreen',
             'toggle-labels-btn': 'Toggle labels',
             'lasso-select-btn': 'Lasso selection',
-            'screenshot-btn': 'Take screenshot'
+            'screenshot-btn': 'Take screenshot',
+            'toggle-outliers-btn': 'Hide outliers'
         };
 
         // Setup delayed hover effect (0.5 seconds)
@@ -2187,6 +2204,12 @@ class CanvasVisualization {
         const hasMetadataFilters = this.metadataFilteredIndices !== null;
 
         const isOutlierCluster = point.cluster === -1;
+
+        // Skip rendering outliers entirely when hidden
+        if (isOutlierCluster && this.outliersHidden) {
+            return;
+        }
+
         const baseColor = point.color || point.cluster_color || this.getClusterColor(point.cluster, point.cluster_name);
         let color = isOutlierCluster ? this.outlierColor : baseColor;
         let radius = 4;

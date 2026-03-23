@@ -10,7 +10,7 @@
     <meta property="og:type" content="website">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="Vectoria - Browser-Native Semantic Search & RAG">
-    <title>Vectoria</title>
+    <title>Vectoria - Browser-Native Text Explorer</title>
 
     <script>
         // Immediately apply dark mode class from localStorage to prevent FOUC
@@ -64,6 +64,9 @@
                 <h1>VECTORIA</h1>
             </div>
             <div class="header-actions">
+                <button id="header-theme-toggle" type="button" class="theme-toggle-btn" aria-label="Toggle dark mode">
+                    <i class="fas fa-moon"></i>
+                </button>
             </div>
         </div>
     </header>
@@ -175,6 +178,24 @@
                             <span class="data-stat-label">File</span>
                         </div>
                     </div>
+                    <div id="data-stats-summary" class="data-stats-summary" style="display: none;"></div>
+                    <details id="data-column-details" class="data-column-details" style="display: none;">
+                        <summary>Column details</summary>
+                        <div class="data-column-table-wrapper">
+                            <table id="data-column-table" class="data-column-table">
+                                <thead>
+                                    <tr>
+                                        <th>Column</th>
+                                        <th>Type</th>
+                                        <th>Fill</th>
+                                        <th>Unique</th>
+                                        <th>Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </details>
                 </div>
 
                 <h3 class="step-heading">Select text column</h3>
@@ -189,6 +210,9 @@
                     <button id="process-csv-btn" class="btn btn-primary upload-action-btn" disabled>Process data</button>
                     <div id="processing-loader" class="loader" style="display: none;"></div>
                 </div>
+                <div class="process-settings-hint">
+                    For best results, explore <strong>Advanced Settings</strong> to fine-tune processing for your data.
+                </div>
                 <div id="processing-error" class="alert alert-danger" style="display: none;"></div>
                 <div id="processing-success" class="alert alert-success" style="display: none;"></div>
 
@@ -196,10 +220,6 @@
                     <h3>Sample data preview</h3>
                     <hr>
                     <div id="sample-data-table" class="sample-table"></div>
-                    <div class="sample-data-hint">
-                        <i class="fas fa-info-circle"></i>
-                        <span>For best results, explore <b>Advanced Settings</b> to fine-tune processing for your data.</span>
-                    </div>
                 </div>
             </div>
         </div>
@@ -369,6 +389,9 @@
                                     </button>
                                     <button id="screenshot-btn" class="viz-control-btn">
                                         <i class="fas fa-camera"></i>
+                                    </button>
+                                    <button id="toggle-outliers-btn" class="viz-control-btn">
+                                        <i class="fas fa-ban"></i>
                                     </button>
                                 </div>
                             </div>
@@ -698,12 +721,10 @@
                         <h3>About Vectoria</h3>
 
                         <div class="form-group" style="margin-bottom: 1.25rem;">
-                            <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
+                            <label style="display: flex; align-items: center; justify-content: space-between;">
                                 <span>Dark Mode</span>
-                                <button id="theme-toggle" type="button" class="theme-toggle-setting-btn" aria-label="Toggle dark mode">
-                                    <span class="theme-toggle-track">
-                                        <span class="theme-toggle-thumb"></span>
-                                    </span>
+                                <button id="theme-toggle" type="button" class="theme-toggle-btn" aria-label="Toggle dark mode">
+                                    <i class="fas fa-moon"></i>
                                 </button>
                             </label>
                         </div>

@@ -458,7 +458,6 @@ export async function initializeBrowserML() {
                 window.browserML.isReady = true;
                 hideModelLoadingModal();
                 enableUploadUI();
-                showToast('AI models loaded successfully! You can now upload files.', 'success');
             }
         });
 
@@ -2009,6 +2008,101 @@ if (window.resolveBrowserML) {
 }
 
 /**
+ * Compute per-column descriptive statistics from parsed data.
+ */
+function computeColumnStats(data, columns) {
+    const stats = columns.map(col => {
+        let nonNull = 0;
+        let numericCount = 0;
+        let textLengths = [];
+        let numericValues = [];
+        const uniqueSet = new Set();
+
+        for (let i = 0; i < data.length; i++) {
+            const val = data[i][col];
+            const str = val == null ? '' : String(val).trim();
+            if (str === '') continue;
+            nonNull++;
+            uniqueSet.add(str);
+            const num = Number(val);
+            if (!isNaN(num) && str !== '') {
+                numericCount++;
+                numericValues.push(num);
+            }
+            textLengths.push(str.length);
+        }
+
+        const total = data.length;
+        const fillRate = total > 0 ? nonNull / total : 0;
+
+        // Determine type
+        let type = 'empty';
+        if (nonNull > 0) {
+            const numRatio = numericCount / nonNull;
+            if (numRatio > 0.9) type = 'numeric';
+            else if (numRatio < 0.1) type = 'text';
+            else type = 'mixed';
+        }
+
+        const result = {
+            name: col,
+            type: type,
+            fillRate: fillRate,
+            uniqueCount: uniqueSet.size,
+            total: total,
+            nonNull: nonNull
+        };
+
+        if (type === 'text' || type === 'mixed') {
+            if (textLengths.length > 0) {
+                const sum = textLengths.reduce((a, b) => a + b, 0);
+                result.textStats = {
+                    avgLen: Math.round(sum / textLengths.length),
+                    minLen: Math.min(...textLengths),
+                    maxLen: Math.max(...textLengths)
+                };
+            }
+        }
+
+        if ((type === 'numeric' || type === 'mixed') && numericValues.length > 0) {
+            numericValues.sort((a, b) => a - b);
+            const sum = numericValues.reduce((a, b) => a + b, 0);
+            const mid = Math.floor(numericValues.length / 2);
+            const median = numericValues.length % 2 === 0
+                ? (numericValues[mid - 1] + numericValues[mid]) / 2
+                : numericValues[mid];
+            result.numericStats = {
+                min: numericValues[0],
+                max: numericValues[numericValues.length - 1],
+                mean: +(sum / numericValues.length).toFixed(2),
+                median: +median.toFixed(2)
+            };
+        }
+
+        return result;
+    });
+
+    return stats;
+}
+
+/**
+ * Count duplicate rows in parsed data.
+ */
+function countDuplicateRows(data, columns) {
+    const seen = new Set();
+    let dupes = 0;
+    for (let i = 0; i < data.length; i++) {
+        const key = columns.map(c => data[i][c] ?? '').join('\x00');
+        if (seen.has(key)) {
+            dupes++;
+        } else {
+            seen.add(key);
+        }
+    }
+    return dupes;
+}
+
+/**
  * Handle /api/csv_columns - Return columns and preview after file upload
  */
 async function handleCSVColumnsAPI(options) {
@@ -2053,6 +2147,10 @@ async function handleCSVColumnsAPI(options) {
         };
         const fileType = fileTypeMap[fileExtension] || parsedData.fileType || 'unknown';
 
+        // Compute descriptive statistics
+        const columnStats = computeColumnStats(parsedData.data, parsedData.columns);
+        const duplicateCount = countDuplicateRows(parsedData.data, parsedData.columns);
+
         // Return columns and preview (matching Flask response format)
         const response = {
             success: true,
@@ -2061,7 +2159,9 @@ async function handleCSVColumnsAPI(options) {
             filename: file.name,
             file_type: fileType,  // Add file_type to response (vectoria.js expects this)
             num_rows: parsedData.rowCount,
-            file_size: file.size
+            file_size: file.size,
+            column_stats: columnStats,
+            duplicate_count: duplicateCount
         };
 
         return new Response(JSON.stringify(response), {
