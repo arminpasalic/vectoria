@@ -520,29 +520,44 @@
                         <div class="form-group">
                             <label for="llm-model-id">Model: <span title="Page reload required">⚠️</span></label>
                             <select id="llm-model-id" class="form-control">
-                                <optgroup label="Google">
-                                    <option value="gemma-2-2b-it-q4f32_1-MLC" selected>Gemma 2 2B (8K context)</option>
-                                    <option value="gemma-2-9b-it-q4f32_1-MLC">Gemma 2 9B (8K context)</option>
+                                <optgroup label="Qwen3 · Latest (32K context, Thinking)">
+                                    <option value="Qwen3-1.7B-q4f32_1-MLC" selected>Qwen3 1.7B · ~2.0 GB · Thinking</option>
+                                    <option value="Qwen3-0.6B-q4f32_1-MLC">Qwen3 0.6B · ~1.4 GB · Thinking</option>
+                                    <option value="Qwen3-4B-q4f32_1-MLC">Qwen3 4B · ~3.2 GB · Thinking</option>
+                                    <option value="Qwen3-8B-q4f32_1-MLC">Qwen3 8B · ~5.6 GB · Thinking</option>
                                 </optgroup>
-                                <optgroup label="Meta">
-                                    <option value="Llama-3.2-3B-Instruct-q4f32_1-MLC">Llama 3.2 3B (8K context)</option>
-                                    <option value="Llama-3.2-1B-Instruct-q4f32_1-MLC">Llama 3.2 1B (8K context)</option>
+                                <optgroup label="Qwen3.5 · Newest (32K context)">
+                                    <option value="Qwen3.5-0.8B-q4f32_1-MLC">Qwen3.5 0.8B · ~1.6 GB</option>
+                                    <option value="Qwen3.5-2B-q4f32_1-MLC">Qwen3.5 2B · ~2.2 GB</option>
+                                    <option value="Qwen3.5-4B-q4f32_1-MLC">Qwen3.5 4B · ~3.9 GB</option>
+                                    <option value="Qwen3.5-9B-q4f32_1-MLC">Qwen3.5 9B · ~6.4 GB</option>
                                 </optgroup>
-                                <optgroup label="Qwen">
-                                    <option value="Qwen3-0.6B-q4f32_1-MLC">Qwen 3 0.6B (32K context) · Reasoning/Thinking</option>
-                                    <option value="Qwen3-1.7B-q4f32_1-MLC">Qwen 3 1.7B (32K context) · Reasoning/Thinking</option>
-                                    <option value="Qwen3-4B-q4f32_1-MLC">Qwen 3 4B (32K context) · Reasoning/Thinking</option>
-                                    <option value="Qwen3-8B-q4f32_1-MLC">Qwen 3 8B (32K context) · Reasoning/Thinking</option>
+                                <optgroup label="Qwen2.5 (8K context)">
+                                    <option value="Qwen2.5-0.5B-Instruct-q4f32_1-MLC">Qwen2.5 0.5B · ~0.9 GB</option>
+                                    <option value="Qwen2.5-1.5B-Instruct-q4f32_1-MLC">Qwen2.5 1.5B · ~1.6 GB</option>
+                                    <option value="Qwen2.5-3B-Instruct-q4f32_1-MLC">Qwen2.5 3B · ~2.5 GB</option>
+                                    <option value="Qwen2.5-7B-Instruct-q4f32_1-MLC">Qwen2.5 7B · ~5.1 GB</option>
                                 </optgroup>
-                                <optgroup label="Microsoft">
-                                    <option value="Phi-3.5-mini-instruct-q4f32_1-MLC">Phi 3.5 Mini (4K context)</option>
+                                <optgroup label="Meta Llama (8K context)">
+                                    <option value="Llama-3.2-1B-Instruct-q4f32_1-MLC">Llama 3.2 1B · ~1.1 GB</option>
+                                    <option value="Llama-3.2-3B-Instruct-q4f32_1-MLC">Llama 3.2 3B · ~2.6 GB</option>
+                                    <option value="Llama-3.1-8B-Instruct-q4f32_1-MLC">Llama 3.1 8B · ~4.6 GB</option>
                                 </optgroup>
-                                <optgroup label="HuggingFace">
-                                    <option value="SmolLM2-1.7B-Instruct-q4f32_1-MLC">SmolLM2 1.7B (8K context)</option>
+                                <optgroup label="Google Gemma (8K context)">
+                                    <option value="gemma3-1b-it-q4f16_1-MLC">Gemma 3 1B · ~2.5 GB</option>
+                                    <option value="gemma-2-2b-it-q4f32_1-MLC">Gemma 2 2B · ~1.9 GB</option>
+                                    <option value="gemma-2-9b-it-q4f32_1-MLC">Gemma 2 9B · ~6.4 GB</option>
                                 </optgroup>
-                                <optgroup label="DeepSeek">
-                                    <option value="DeepSeek-R1-Distill-Qwen-7B-q4f32_1-MLC">DeepSeek R1 Qwen 7B (32K context) · Reasoning/Thinking</option>
-                                    <option value="DeepSeek-R1-Distill-Llama-8B-q4f32_1-MLC">DeepSeek R1 Llama 8B (8K context) · Reasoning/Thinking</option>
+                                <optgroup label="Microsoft Phi">
+                                    <option value="Phi-4-mini-instruct-q4f16_1-MLC">Phi 4 Mini · ~5.9 GB · 8K context</option>
+                                    <option value="Phi-3.5-mini-instruct-q4f32_1-MLC">Phi 3.5 Mini · ~2.0 GB · 4K context</option>
+                                </optgroup>
+                                <optgroup label="HuggingFace SmolLM2 (8K context)">
+                                    <option value="SmolLM2-1.7B-Instruct-q4f32_1-MLC">SmolLM2 1.7B · ~1.8 GB</option>
+                                </optgroup>
+                                <optgroup label="DeepSeek R1 · Reasoning">
+                                    <option value="DeepSeek-R1-Distill-Qwen-7B-q4f32_1-MLC">DeepSeek R1 Qwen 7B · ~5.1 GB · 32K · Thinking</option>
+                                    <option value="DeepSeek-R1-Distill-Llama-8B-q4f32_1-MLC">DeepSeek R1 Llama 8B · ~5.9 GB · 8K · Thinking</option>
                                 </optgroup>
                             </select>
                             <small class="form-help">Reload required. Models cached after download.</small>

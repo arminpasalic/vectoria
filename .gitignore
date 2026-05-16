@@ -5,3 +5,4 @@ server.crt
 start-https.sh
 start-network.js
 LLM_CLEARANCE.md
+.claude

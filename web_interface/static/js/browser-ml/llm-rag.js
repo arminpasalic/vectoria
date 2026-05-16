@@ -4,7 +4,7 @@
  * Runs Gemma 2 2B locally in browser via WebGPU
  */
 
-import { CreateWebWorkerMLCEngine, prebuiltAppConfig } from "https://esm.run/@mlc-ai/web-llm";
+import { CreateWebWorkerMLCEngine, prebuiltAppConfig } from "https://esm.run/@mlc-ai/web-llm@0.2.83";
 import { getModelConstraints } from "../model-constraints.js";
 
 // Load cached real download sizes from previous downloads
@@ -32,7 +32,7 @@ export class BrowserRAG {
         const savedConfig = this.loadSavedConfig();
 
         // Load model ID from saved config or use default
-        this.modelId = savedConfig.model_id || "gemma-2-2b-it-q4f32_1-MLC";
+        this.modelId = savedConfig.model_id || "Qwen3-1.7B-q4f32_1-MLC";
 
         // Get model constraints
         this.modelConstraints = getModelConstraints(this.modelId);
@@ -238,14 +238,7 @@ Answer based on the documents above:`;
                 },
                 // Set context window size
                 context_window_size: this.maxContextLength,
-                appConfig: {
-                    ...prebuiltAppConfig,
-                    cache: {
-                        ...(prebuiltAppConfig?.cache || {}),
-                        enabled: true,
-                        storageType: "indexeddb"
-                    }
-                }
+                appConfig: { ...prebuiltAppConfig, cacheBackend: "indexeddb" }
             });
 
             this.isInitialized = true;
@@ -267,7 +260,16 @@ Answer based on the documents above:`;
                 this.worker = null;
             }
             console.error('❌ Failed to initialize LLM:', error);
-            throw new Error(`LLM initialization failed: ${error.message}`);
+            const rawMsg = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error));
+            let msg = rawMsg;
+            if (rawMsg.includes('Cache') && rawMsg.includes('network')) {
+                msg = `Model download failed (network error). This usually means:\n` +
+                    `• The model files couldn't be fetched from HuggingFace\n` +
+                    `• A firewall or VPN is blocking the download\n` +
+                    `• HuggingFace is temporarily unavailable\n\n` +
+                    `Try refreshing the page or switching to a different model in Advanced Settings.`;
+            }
+            throw new Error(`LLM initialization failed: ${msg}`);
         } finally {
             console.log = originalConsoleLog;
             console.info = originalConsoleInfo;
