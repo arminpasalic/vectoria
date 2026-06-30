@@ -7,7 +7,7 @@
 // name (so old caches get evicted in the activate handler) and appends it as
 // a ?v= query string to every precached URL (so a stale Vercel/CDN copy is
 // not served from the previous deploy's immutable cache).
-const BUILD_ID = '2026-05-18-01';
+const BUILD_ID = '2026-06-30-01';
 const CACHE_VERSION = `vectoria-${BUILD_ID}`;
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
@@ -78,6 +78,12 @@ self.addEventListener('fetch', (event) => {
 
     // Skip external CDN resources (they have their own caching)
     if (url.origin !== location.origin) {
+        return;
+    }
+
+    // Never cache the sample dataset: it's large (14MB) and a stale/broken
+    // copy silently breaks the "Load sample" button. Always go to network.
+    if (url.pathname.startsWith('/static/samples/')) {
         return;
     }
 
