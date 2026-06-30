@@ -9,12 +9,17 @@
 // release. The SW uses it for the cache name (so old caches get evicted in the
 // activate handler) and appends it as a ?v= query string to every precached
 // URL (so a stale Vercel/CDN immutable copy is not served after a deploy).
-const BUILD_ID = '2026-06-30-7ecaa2f';
+const BUILD_ID = '2026-06-30-c2801aa';
 const CACHE_VERSION = `vectoria-${BUILD_ID}`;
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 
 const v = (path) => `${path}?v=${BUILD_ID}`;
+
+// Only these small app-code asset types are eligible for dynamic caching.
+// Large media (gif/png), JSON data, WASM and model files are deliberately
+// excluded so the service worker can never exhaust the origin storage quota.
+const CACHEABLE_ASSET = /^\/static\/.*\.(js|css|woff2?|ttf|svg|ico)$/;
 
 // Assets to cache immediately on install
 const STATIC_ASSETS = [
@@ -115,14 +120,17 @@ self.addEventListener('fetch', (event) => {
                             return response;
                         }
 
-                        // Clone the response (can only be consumed once)
-                        const responseToCache = response.clone();
-
-                        // Cache dynamic content
-                        caches.open(DYNAMIC_CACHE)
-                            .then((cache) => {
-                                cache.put(request, responseToCache);
-                            });
+                        // Only dynamic-cache small app code (js/css/fonts/icons)
+                        // under /static/. Never cache large media, JSON data,
+                        // WASM or model files — they can exhaust the origin
+                        // storage quota, which makes Cache.put() fail and
+                        // cascades into other fetches failing (ERR_FAILED).
+                        if (CACHEABLE_ASSET.test(url.pathname)) {
+                            const responseToCache = response.clone();
+                            caches.open(DYNAMIC_CACHE)
+                                .then((cache) => cache.put(request, responseToCache))
+                                .catch((err) => console.warn('[SW] Dynamic cache skipped:', err.message));
+                        }
 
                         return response;
                     })
