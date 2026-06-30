@@ -3,7 +3,7 @@
  * Allows UI to stay responsive during processing
  */
 
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.5/+esm';
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/+esm';
 
 // Configure transformers.js environment
 env.allowLocalModels = false;
@@ -18,6 +18,20 @@ try {
         env.backends.onnx.wasm.proxy = false;
     }
 } catch (_) { /* best-effort tuning */ }
+
+const EMBED_INIT_TIMEOUT_MS = 180000;
+
+function withTimeout(promise, ms, label) {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+            const err = new Error(`${label} timed out after ${Math.round(ms / 1000)}s`);
+            err.code = 'download_timeout';
+            reject(err);
+        }, ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+}
 
 // Worker state
 let embedder = null;
@@ -217,7 +231,11 @@ async function initializeModel(devicePreference = 'auto') {
             }
         }
 
-        embedder = await pipeline('feature-extraction', modelName, options);
+        embedder = await withTimeout(
+            pipeline('feature-extraction', modelName, options),
+            EMBED_INIT_TIMEOUT_MS,
+            'Embedding model download'
+        );
         isInitialized = true;
         activeDevice = targetDevice;
 
@@ -240,7 +258,11 @@ async function initializeModel(devicePreference = 'auto') {
                 const cpuOptions = { device: 'wasm' };
                 cpuOptions.progress_callback = options.progress_callback;
 
-                embedder = await pipeline('feature-extraction', modelName, cpuOptions);
+                embedder = await withTimeout(
+                    pipeline('feature-extraction', modelName, cpuOptions),
+                    EMBED_INIT_TIMEOUT_MS,
+                    'Embedding model download (CPU fallback)'
+                );
                 isInitialized = true;
                 activeDevice = 'cpu';
 
@@ -255,7 +277,8 @@ async function initializeModel(devicePreference = 'auto') {
             } catch (fallbackError) {
                 self.postMessage({
                     type: 'error',
-                    error: `CPU fallback also failed: ${fallbackError.message}`
+                    error: `CPU fallback also failed: ${fallbackError.message}`,
+                    reason: fallbackError?.code === 'download_timeout' ? 'download_timeout' : 'init_failed'
                 });
                 return;
             }
@@ -263,7 +286,8 @@ async function initializeModel(devicePreference = 'auto') {
 
         self.postMessage({
             type: 'error',
-            error: `Embeddings initialization failed: ${error.message}`
+            error: `Embeddings initialization failed: ${error.message}`,
+            reason: error?.code === 'download_timeout' ? 'download_timeout' : 'init_failed'
         });
     }
 }
@@ -309,15 +333,22 @@ async function embedBatch(texts, options = {}) {
             truncate: true
         });
 
-        // Extract embeddings
+        // Extract embeddings as Float32Array buffers (50% less RAM than plain JS arrays).
+        // Each batch's contiguous slice is copied into its own Float32Array so we can transfer
+        // ownership of the underlying ArrayBuffers to the main thread (zero-copy postMessage).
         const batchSize = texts.length;
-        const embeddings = [];
+        const embeddings = new Array(batchSize);
+        const transferList = new Array(batchSize);
 
         for (let j = 0; j < batchSize; j++) {
             const start = j * dimension;
             const end = start + dimension;
-            const embedding = Array.from(output.data.slice(start, end));
-            embeddings.push(embedding);
+            const view = output.data.subarray(start, end);
+            // Copy into a standalone Float32Array (with its own ArrayBuffer) so we can transfer it
+            const buf = new Float32Array(view.length);
+            buf.set(view);
+            embeddings[j] = buf;
+            transferList[j] = buf.buffer;
         }
 
         self.postMessage({
@@ -325,7 +356,7 @@ async function embedBatch(texts, options = {}) {
             embeddings: embeddings,
             batchId: batchId,
             device: activeDevice
-        });
+        }, transferList);
 
     } catch (error) {
         self.postMessage({

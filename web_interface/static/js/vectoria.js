@@ -254,7 +254,7 @@ function updateModelSetupModalModelNames() {
         || 'intfloat/multilingual-e5-small';
     const llmName = config?.llm?.model_id
         || defaults?.llm?.model_id
-        || 'gemma-2-2b-it-q4f32_1-MLC';
+        || 'gemma-2-2b-it-q4f16_1-MLC';
 
     if (embeddingEl) embeddingEl.textContent = embeddingName;
     if (llmEl) llmEl.textContent = llmName;
@@ -605,6 +605,21 @@ function getClusterName(clusterId) {
     return `Cluster ${clusterId}`;
 }
 
+/**
+ * Map a raw `cluster_label` metadata value ("Cluster 0", "Outlier", "noise")
+ * to its display name, applying any custom/AI label. Returns the raw value
+ * unchanged for anything that isn't a recognised cluster label.
+ * Used by the Filters panel so the displayed name follows renames while the
+ * underlying filter value stays raw.
+ */
+function clusterLabelDisplay(value) {
+    const m = String(value).match(/^Cluster\s+(\d+)$/i);
+    if (m) return getClusterName(parseInt(m[1], 10));
+    if (/^(outlier|noise)$/i.test(String(value))) return 'Outlier';
+    return value;
+}
+window.clusterLabelDisplay = clusterLabelDisplay;
+
 // Cluster renaming persistence
 function saveCustomClusterNames() {
     const obj = Object.fromEntries(customClusterNames);
@@ -639,6 +654,7 @@ function renameCluster(clusterId, newName) {
 
     saveCustomClusterNames();
     refreshClusterDisplays();
+    showToast('Cluster renamed', 'success');
 }
 
 function promptRenameCluster(clusterId) {
@@ -656,9 +672,16 @@ function promptRenameCluster(clusterId) {
     const confirmBtn = document.getElementById('cluster-rename-confirm');
     const cancelBtn = document.getElementById('cluster-rename-cancel');
     const cancelXBtn = document.getElementById('cluster-rename-cancel-x');
+    const aiOne = document.getElementById('cluster-ai-label-one');
+    const aiAll = document.getElementById('cluster-ai-label-all');
+    const extRadio = document.getElementById('cluster-summarizer-external');
+    const extHint = document.getElementById('cluster-summarizer-external-hint');
+    const aiStatus = document.getElementById('cluster-ai-label-status');
 
     defaultLabel.textContent = defaultClusterName;
     input.value = hasCustomName ? customClusterNames.get(clusterId) : '';
+    if (aiStatus) aiStatus.textContent = '';
+    syncSummarizerMcpAvailability();
 
     const closeModal = () => {
         modal.style.display = 'none';
@@ -667,6 +690,9 @@ function promptRenameCluster(clusterId) {
         cancelXBtn.removeEventListener('click', onCancel);
         modal.removeEventListener('click', onOverlay);
         document.removeEventListener('keydown', onKeydown);
+        document.removeEventListener('vectoria:mcp-status', syncSummarizerMcpAvailability);
+        if (aiOne) aiOne.onclick = null;
+        if (aiAll) aiAll.onclick = null;
     };
 
     const onConfirm = () => {
@@ -682,19 +708,180 @@ function promptRenameCluster(clusterId) {
 
     const onKeydown = (e) => {
         if (e.key === 'Escape') closeModal();
-        if (e.key === 'Enter') onConfirm();
+        if (e.key === 'Enter' && document.activeElement === input) onConfirm();
     };
+
+    // Labelling always runs the local model from the in-page button. External
+    // (MCP AI) labelling is AI-initiated only — see getSummarizerMode().
+    if (aiOne) {
+        aiOne.onclick = async () => {
+            // The top progress banner carries live feedback now; keep a tiny inline hint.
+            if (aiStatus) aiStatus.textContent = 'Working… see the banner at the top of the page.';
+            try {
+                const newLabel = await window.aiLabelSingleCluster(clusterId, 'local');
+                if (newLabel) {
+                    input.value = newLabel;
+                    if (aiStatus) aiStatus.textContent = `New label: "${newLabel}"`;
+                } else {
+                    if (aiStatus) aiStatus.textContent = '';
+                }
+            } catch (e) {
+                if (aiStatus) aiStatus.textContent = `Failed: ${e.message}`;
+            }
+        };
+    }
+    if (aiAll) {
+        aiAll.onclick = async () => {
+            if (aiStatus) aiStatus.textContent = 'Working… see the banner at the top of the page.';
+            try {
+                const summary = await window.aiLabelAllClusters('local');
+                if (aiStatus) aiStatus.textContent = `Labelled ${summary.labelled}/${summary.total} clusters.`;
+            } catch (e) {
+                if (aiStatus) aiStatus.textContent = `Failed: ${e.message}`;
+            }
+        };
+    }
 
     confirmBtn.addEventListener('click', onConfirm);
     cancelBtn.addEventListener('click', onCancel);
     cancelXBtn.addEventListener('click', onCancel);
     modal.addEventListener('click', onOverlay);
     document.addEventListener('keydown', onKeydown);
+    document.addEventListener('vectoria:mcp-status', syncSummarizerMcpAvailability);
 
     modal.style.display = 'flex';
     input.focus();
     input.select();
+
+    function syncSummarizerMcpAvailability() {
+        // External (MCP AI) labelling is AI-initiated only — the in-page button always
+        // uses the local model. Remove the external radio if present and force local.
+        if (extRadio) {
+            const localRadio = document.querySelector('input[name="cluster-summarizer-mode"][value="local"]');
+            if (localRadio) localRadio.checked = true;
+            const wrapper = extRadio.closest('label') || extRadio;
+            wrapper.style.display = 'none';
+        }
+        if (extHint) extHint.style.display = 'none';
+    }
 }
+
+// Cancellation flag for in-flight bulk labelling. Checked between clusters.
+let _cancelClusterLabelling = false;
+function cancelClusterLabelling() { _cancelClusterLabelling = true; }
+window.cancelClusterLabelling = cancelClusterLabelling;
+
+function emitLabelProgress(detail) {
+    document.dispatchEvent(new CustomEvent('vectoria:cluster-label-progress', { detail }));
+}
+
+/**
+ * Generate a label for a single cluster via the in-pipeline analysis service
+ * using the local model. Returns the new label string (or '' on failure).
+ */
+async function aiLabelCluster(clusterId, summarizer = 'local') {
+    const pipeline = window.browserML?.pipeline;
+    if (!pipeline?.analysis) throw new Error('Analysis service unavailable');
+    const result = await pipeline.analysis.summarizeCluster({
+        cluster_id: clusterId,
+        summarizer,
+        persist_label: summarizer === 'local'
+    });
+    if (result?.error) throw new Error(result.error);
+    if (summarizer === 'local' && result?.label) {
+        // setCustomClusterLabel already mirrors into customClusterNames + dispatches event
+        return result.label;
+    }
+    return '';
+}
+
+/**
+ * Label one cluster and drive the persistent top progress banner.
+ * Used by the per-cluster sparkle button in the filter list.
+ */
+async function aiLabelSingleCluster(clusterId, summarizer) {
+    const mode = summarizer || getSummarizerMode();
+    emitLabelProgress({ phase: 'start', index: 0, total: 1, cluster_id: clusterId });
+    try {
+        const label = await aiLabelCluster(clusterId, mode);
+        emitLabelProgress({ phase: 'tick', index: 1, total: 1, cluster_id: clusterId, label });
+        emitLabelProgress({ phase: 'done', index: 1, total: 1, labelled: label ? 1 : 0 });
+        return label;
+    } catch (e) {
+        emitLabelProgress({ phase: 'error', index: 1, total: 1, cluster_id: clusterId, error: e.message });
+        throw e;
+    }
+}
+
+/**
+ * Iterate every non-noise cluster sequentially, driving the progress banner.
+ * Runs the local model. (External/MCP-AI labelling is AI-initiated: the connected
+ * MCP client calls summarize_cluster + set_cluster_label over the bridge itself.)
+ */
+async function aiLabelAllClusters(summarizer) {
+    const mode = summarizer || getSummarizerMode();
+    const pipeline = window.browserML?.pipeline;
+    if (!pipeline?.currentDataset) throw new Error('No dataset loaded');
+    const clusters = pipeline.currentDataset.clusters || [];
+    const unique = [...new Set(clusters)].filter(c => c !== -1).sort((a, b) => a - b);
+
+    _cancelClusterLabelling = false;
+    let labelled = 0;
+    let processed = 0;
+    emitLabelProgress({ phase: 'start', index: 0, total: unique.length });
+
+    for (const cid of unique) {
+        if (_cancelClusterLabelling) {
+            emitLabelProgress({ phase: 'cancelled', index: processed, total: unique.length, labelled });
+            return { labelled, total: unique.length, cancelled: true };
+        }
+        try {
+            const res = await pipeline.analysis.summarizeCluster({
+                cluster_id: cid,
+                summarizer: mode,
+                persist_label: true
+            });
+            if (res?.label) labelled++;
+            processed++;
+            emitLabelProgress({
+                phase: 'tick', index: processed, total: unique.length,
+                cluster_id: cid, label: res?.label || null
+            });
+        } catch (e) {
+            processed++;
+            console.warn(`Cluster ${cid} labelling failed:`, e.message);
+            emitLabelProgress({
+                phase: 'tick', index: processed, total: unique.length,
+                cluster_id: cid, error: e.message
+            });
+        }
+    }
+    emitLabelProgress({ phase: 'done', index: processed, total: unique.length, labelled });
+    return { labelled, total: unique.length };
+}
+
+function getSummarizerMode() {
+    // External (MCP AI) labelling is AI-initiated only: the connected MCP client
+    // calls summarize_cluster + set_cluster_label over the live bridge. The in-page
+    // button cannot push work to the external AI, so it always uses the local model.
+    // (Labels set by the external AI still arrive via vectoria:cluster-labels-changed.)
+    return 'local';
+}
+
+window.aiLabelCluster = aiLabelCluster;
+window.aiLabelSingleCluster = aiLabelSingleCluster;
+window.aiLabelAllClusters = aiLabelAllClusters;
+window.getSummarizerMode = getSummarizerMode;
+
+// React to AI-driven cluster label updates (from MCP set_cluster_label, etc.)
+document.addEventListener('vectoria:cluster-labels-changed', (e) => {
+    const { cluster_id, label } = e.detail || {};
+    if (cluster_id !== undefined && label) {
+        customClusterNames.set(Number(cluster_id), label);
+        try { saveCustomClusterNames(); } catch (_) {}
+    }
+    refreshClusterDisplays();
+});
 
 function refreshClusterDisplays() {
     // Refresh text list if visible
@@ -717,8 +904,6 @@ function refreshClusterDisplays() {
     if (window.renderer && typeof window.renderer.updateClusterLabels === 'function') {
         window.renderer.updateClusterLabels();
     }
-
-    showToast('Cluster renamed', 'success');
 }
 
 // Filter by a specific cluster - programmatically select cluster_label filter and apply
@@ -3513,6 +3698,435 @@ window.setClusterNames = (names) => {
 window.performSearch = performSearch;
 window.unlockTextList = unlockTextList;
 
+// ---------------------------------------------------------------------------
+// Cluster-label toolbar + progress banner wiring
+// ---------------------------------------------------------------------------
+
+// Show the "Label clusters" toolbar in the Filters card once a dataset exists.
+function syncClusterLabelToolbar() {
+    const toolbar = document.getElementById('cluster-label-toolbar');
+    if (!toolbar) return;
+    const hasDataset = !!window.browserML?.pipeline?.currentDataset;
+    toolbar.style.display = hasDataset ? 'flex' : 'none';
+
+    const select = document.getElementById('cluster-summarizer-quick');
+    if (select) {
+        // External labelling is AI-initiated only (see getSummarizerMode); the in-page
+        // button can't drive the external AI, so drop the option entirely to avoid a
+        // misleading "labelled instantly" no-op.
+        const extOpt = select.querySelector('option[value="external"]');
+        if (extOpt) extOpt.remove();
+        if (select.value === 'external') select.value = 'local';
+    }
+}
+window.syncClusterLabelToolbar = syncClusterLabelToolbar;
+
+function setupClusterLabelControls() {
+    const select = document.getElementById('cluster-summarizer-quick');
+    if (select) {
+        let saved = 'local';
+        try { saved = localStorage.getItem('vectoria_summarizer_mode') || 'local'; } catch (_) {}
+        select.value = saved;
+        select.addEventListener('change', () => {
+            try { localStorage.setItem('vectoria_summarizer_mode', select.value); } catch (_) {}
+        });
+    }
+
+    const allBtn = document.getElementById('cluster-label-all-quick');
+    if (allBtn) {
+        allBtn.addEventListener('click', async () => {
+            const mode = (select && select.value) || getSummarizerMode();
+            try { localStorage.setItem('vectoria_summarizer_mode', mode); } catch (_) {}
+            allBtn.disabled = true;
+            try {
+                await window.aiLabelAllClusters(mode);
+            } catch (e) {
+                showToast(`Labelling failed: ${e.message}`, 'error');
+            } finally {
+                allBtn.disabled = false;
+            }
+        });
+    }
+
+    // Progress banner: single listener drives show/update/hide for both flows.
+    const banner = document.getElementById('cluster-label-progress-banner');
+    const text = document.getElementById('cluster-label-progress-text');
+    const fill = document.getElementById('cluster-label-progress-fill');
+    const cancelBtn = document.getElementById('cluster-label-progress-cancel');
+    let hideTimer = null;
+
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            if (typeof window.cancelClusterLabelling === 'function') window.cancelClusterLabelling();
+        });
+    }
+
+    document.addEventListener('vectoria:cluster-label-progress', (e) => {
+        if (!banner) return;
+        const d = e.detail || {};
+        const total = d.total || 1;
+        const pct = total ? Math.round((d.index / total) * 100) : 0;
+
+        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+
+        const show = () => { banner.style.display = 'flex'; requestAnimationFrame(() => banner.classList.add('visible')); };
+        const hide = () => { banner.classList.remove('visible'); setTimeout(() => { banner.style.display = 'none'; }, 350); };
+
+        if (d.phase === 'start') {
+            show();
+            if (fill) fill.style.width = '0%';
+            if (text) text.textContent = total > 1 ? `Labelling clusters (0/${total})…` : 'Labelling cluster…';
+        } else if (d.phase === 'tick') {
+            show();
+            if (fill) fill.style.width = `${pct}%`;
+            if (text) {
+                const labelPart = d.label ? ` — “${d.label}”` : (d.error ? ' — failed' : '');
+                text.textContent = total > 1
+                    ? `Labelling clusters (${d.index}/${total})${labelPart}`
+                    : `Labelling cluster${labelPart}`;
+            }
+        } else if (d.phase === 'done') {
+            if (fill) fill.style.width = '100%';
+            if (text) text.textContent = `Labelled ${d.labelled ?? d.index}/${total} cluster${total === 1 ? '' : 's'}`;
+            showToast(`AI-labelled ${d.labelled ?? d.index}/${total} cluster${total === 1 ? '' : 's'}`, 'success');
+            hideTimer = setTimeout(hide, 1200);
+        } else if (d.phase === 'cancelled') {
+            if (text) text.textContent = `Cancelled at ${d.index}/${total}`;
+            showToast(`Cluster labelling cancelled at ${d.index}/${total}`, 'warning');
+            hideTimer = setTimeout(hide, 1200);
+        } else if (d.phase === 'error') {
+            if (text) text.textContent = `Failed: ${d.error || 'unknown error'}`;
+            hideTimer = setTimeout(hide, 2000);
+        }
+    });
+
+    // Keep toolbar in sync with MCP connection + dataset state.
+    document.addEventListener('vectoria:mcp-status', syncClusterLabelToolbar);
+    syncClusterLabelToolbar();
+}
+
+document.addEventListener('DOMContentLoaded', setupClusterLabelControls);
+
+// ---------------------------------------------------------------------------
+// Quick Analysis & Statistics modal
+// ---------------------------------------------------------------------------
+
+function _qaPipeline() {
+    return window.browserML?.pipeline || null;
+}
+
+function openQuickAnalysisModal() {
+    const pipeline = _qaPipeline();
+    const docs = pipeline?.currentDataset?.documents;
+    if (!docs || !docs.length) {
+        showToast('Load and process data first', 'warning');
+        return;
+    }
+    const modal = document.getElementById('quick-analysis-modal');
+    if (!modal) return;
+    try {
+        renderQuickAnalysis();
+    } catch (e) {
+        console.error('❌ Quick analysis failed:', e);
+        showToast(`Analysis failed: ${e.message}`, 'error');
+        return;
+    }
+    modal.style.display = 'flex';
+    document.body.classList.add('modal-open');
+    requestAnimationFrame(() => modal.classList.add('modal-visible'));
+}
+window.openQuickAnalysisModal = openQuickAnalysisModal;
+
+function closeQuickAnalysisModal() {
+    const modal = document.getElementById('quick-analysis-modal');
+    if (!modal) return;
+    modal.classList.remove('modal-visible');
+    setTimeout(() => {
+        modal.style.display = 'none';
+        document.body.classList.remove('modal-open');
+    }, 250);
+}
+window.closeQuickAnalysisModal = closeQuickAnalysisModal;
+
+function renderQuickAnalysis() {
+    const container = document.getElementById('quick-analysis-content');
+    if (!container) return;
+    const pipeline = _qaPipeline();
+    const ds = pipeline.currentDataset;
+    const docs = ds.documents;
+    const clusters = ds.clusters || [];
+    const fields = Array.isArray(detectedMetadataFields) ? detectedMetadataFields : [];
+
+    container.innerHTML =
+        _qaOverviewSection(pipeline, docs, clusters) +
+        _qaFieldsSection(pipeline, docs, fields) +
+        _qaClusterSection(pipeline, clusters) +
+        _qaExploreSection(fields);
+
+    _qaWireExplore(fields);
+}
+
+// ---- section 1: dataset overview ------------------------------------------
+function _qaOverviewSection(pipeline, docs, clusters) {
+    const clusterIds = new Set();
+    const sizes = new Map();
+    for (const c of clusters) {
+        if (c === undefined || c === null || c === -1) continue;
+        clusterIds.add(c);
+        sizes.set(c, (sizes.get(c) || 0) + 1);
+    }
+    const sizeVals = [...sizes.values()];
+    const largest = sizeVals.length ? Math.max(...sizeVals) : 0;
+    const smallest = sizeVals.length ? Math.min(...sizeVals) : 0;
+
+    let outlierCount = 0;
+    try {
+        outlierCount = pipeline.analysis.getOutliers({ threshold: 0.5, k: docs.length }).count;
+    } catch (_) { outlierCount = 0; }
+
+    const probs = docs
+        .map(d => d?.metadata?.cluster_probability)
+        .filter(p => typeof p === 'number' && Number.isFinite(p));
+    const avgProb = probs.length ? probs.reduce((a, b) => a + b, 0) / probs.length : null;
+
+    const stat = (label, value) =>
+        `<article class="processing-summary-stat">
+            <span class="processing-summary-label">${escapeHtml(label)}</span>
+            <span class="processing-summary-value">${escapeHtml(String(value))}</span>
+        </article>`;
+
+    return `<section class="qa-section">
+        <h3 class="qa-section-title">Dataset Overview</h3>
+        <section class="processing-summary-metrics">
+            ${stat('Documents', docs.length.toLocaleString())}
+            ${stat('Clusters', clusterIds.size.toLocaleString())}
+            ${stat('Outliers', outlierCount.toLocaleString())}
+            ${stat('Largest cluster', largest.toLocaleString())}
+            ${stat('Smallest cluster', smallest.toLocaleString())}
+            ${stat('Avg confidence', avgProb === null ? '—' : avgProb.toFixed(2))}
+        </section>
+    </section>`;
+}
+
+// ---- section 2: per-field stats -------------------------------------------
+function _qaFieldsSection(pipeline, docs, fields) {
+    if (!fields.length) {
+        return `<section class="qa-section">
+            <h3 class="qa-section-title">Field Statistics</h3>
+            <p class="qa-empty">No metadata fields detected.</p>
+        </section>`;
+    }
+
+    const total = docs.length;
+    const rows = fields.map(field => {
+        const name = field.name;
+        let filled = 0;
+        let sum = 0, numCount = 0;
+        for (const doc of docs) {
+            const v = doc?.metadata?.[name] ?? doc?.[name];
+            if (v === undefined || v === null || v === '') continue;
+            filled++;
+            if (field.type === 'number') {
+                const n = typeof v === 'number' ? v : parseFloat(v);
+                if (Number.isFinite(n)) { sum += n; numCount++; }
+            }
+        }
+        const fillPct = total ? Math.round((filled / total) * 100) : 0;
+        const unique = field.uniqueValues ? field.uniqueValues.length : 0;
+
+        let details;
+        if (field.type === 'number') {
+            const mean = numCount ? (sum / numCount) : null;
+            const fmt = x => (x === null || x === undefined) ? '—' : (Math.abs(x) >= 1000 ? x.toLocaleString(undefined, { maximumFractionDigits: 2 }) : Number(x.toFixed(3)));
+            details = `min ${fmt(field.minValue)} · max ${fmt(field.maxValue)} · mean ${fmt(mean)}`;
+        } else {
+            let top = [];
+            try {
+                const agg = pipeline.analysis.aggregate({ group_by: name, agg: 'count' });
+                top = agg.groups.slice(0, 3).map(g => `${g.key} (${g.value})`);
+            } catch (_) { top = []; }
+            details = top.length ? top.join(', ') : '—';
+        }
+
+        return `<tr>
+            <td>${escapeHtml(field.displayName || name)}</td>
+            <td>${escapeHtml(field.type || 'string')}</td>
+            <td>${fillPct}%</td>
+            <td>${unique.toLocaleString()}</td>
+            <td>${escapeHtml(details)}</td>
+        </tr>`;
+    }).join('');
+
+    return `<section class="qa-section">
+        <h3 class="qa-section-title">Field Statistics</h3>
+        <div class="data-column-table-wrapper">
+            <table class="data-column-table">
+                <thead><tr><th>Field</th><th>Type</th><th>Fill</th><th>Unique</th><th>Details</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    </section>`;
+}
+
+// ---- section 3: cluster breakdown -----------------------------------------
+function _qaClusterSection(pipeline, clusters) {
+    const sizes = new Map();
+    for (const c of clusters) {
+        if (c === undefined || c === null) continue;
+        sizes.set(c, (sizes.get(c) || 0) + 1);
+    }
+    if (!sizes.size) {
+        return `<section class="qa-section">
+            <h3 class="qa-section-title">Cluster Breakdown</h3>
+            <p class="qa-empty">No clusters available.</p>
+        </section>`;
+    }
+
+    let kwMap = null;
+    try { kwMap = pipeline.clustering?.getClusterKeywords?.(); } catch (_) { kwMap = null; }
+
+    const ordered = [...sizes.entries()].sort((a, b) => b[1] - a[1]);
+    const rows = ordered.map(([cid, size]) => {
+        let label;
+        if (cid === -1) {
+            label = 'Outliers';
+        } else {
+            const custom = pipeline.getCustomClusterLabel?.(cid);
+            label = (custom && custom.label) || `Cluster ${cid}`;
+        }
+        const keywords = (kwMap && kwMap.get(cid)) ? kwMap.get(cid).slice(0, 5).join(', ') : '—';
+        return `<tr>
+            <td>${escapeHtml(String(cid))}</td>
+            <td>${escapeHtml(label)}</td>
+            <td>${size.toLocaleString()}</td>
+            <td>${escapeHtml(keywords)}</td>
+        </tr>`;
+    }).join('');
+
+    return `<section class="qa-section">
+        <h3 class="qa-section-title">Cluster Breakdown</h3>
+        <div class="data-column-table-wrapper">
+            <table class="data-column-table">
+                <thead><tr><th>ID</th><th>Label</th><th>Size</th><th>Top keywords</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    </section>`;
+}
+
+// ---- section 4: interactive aggregate + cross-tab -------------------------
+function _qaExploreSection(fields) {
+    const fieldOpts = (includeNumericOnly) => {
+        const opts = ['<option value="__cluster__">Cluster</option>'];
+        for (const f of fields) {
+            if (includeNumericOnly && f.type !== 'number') continue;
+            opts.push(`<option value="${escapeHtml(f.name)}">${escapeHtml(f.displayName || f.name)}</option>`);
+        }
+        return opts.join('');
+    };
+
+    return `<section class="qa-section">
+        <h3 class="qa-section-title">Aggregate</h3>
+        <div class="qa-controls">
+            <select id="qa-agg-group" class="qa-select">${fieldOpts(false)}</select>
+            <select id="qa-agg-metric" class="qa-select">
+                <option value="__count__">Count</option>
+                ${fields.filter(f => f.type === 'number').map(f => `<option value="${escapeHtml(f.name)}">${escapeHtml(f.displayName || f.name)}</option>`).join('')}
+            </select>
+            <select id="qa-agg-fn" class="qa-select">
+                <option value="count">count</option>
+                <option value="mean">mean</option>
+                <option value="sum">sum</option>
+                <option value="median">median</option>
+                <option value="min">min</option>
+                <option value="max">max</option>
+            </select>
+            <button id="qa-agg-run" type="button" class="apply-filters-btn">Run</button>
+        </div>
+        <div id="qa-agg-result" class="qa-result"></div>
+
+        <h3 class="qa-section-title" style="margin-top:18px;">Cross-Tabulation</h3>
+        <div class="qa-controls">
+            <select id="qa-xt-row" class="qa-select">${fieldOpts(false)}</select>
+            <select id="qa-xt-col" class="qa-select">${fieldOpts(false)}</select>
+            <select id="qa-xt-norm" class="qa-select">
+                <option value="none">No normalize</option>
+                <option value="row">By row</option>
+                <option value="col">By column</option>
+                <option value="total">By total</option>
+            </select>
+            <button id="qa-xt-run" type="button" class="apply-filters-btn">Run</button>
+        </div>
+        <div id="qa-xt-result" class="qa-result"></div>
+    </section>`;
+}
+
+function _qaWireExplore(fields) {
+    const pipeline = _qaPipeline();
+
+    const aggRun = document.getElementById('qa-agg-run');
+    if (aggRun) {
+        aggRun.addEventListener('click', () => {
+            const group_by = document.getElementById('qa-agg-group').value;
+            const metric = document.getElementById('qa-agg-metric').value;
+            const agg = document.getElementById('qa-agg-fn').value;
+            const out = document.getElementById('qa-agg-result');
+            try {
+                const res = pipeline.analysis.aggregate({ group_by, metric, agg });
+                const fmt = v => Number.isInteger(v) ? v.toLocaleString() : Number(v.toFixed(3));
+                const rows = res.groups.slice(0, 100).map(g =>
+                    `<tr><td>${escapeHtml(g.key)}</td><td>${fmt(g.value)}</td><td>${g.n.toLocaleString()}</td></tr>`
+                ).join('');
+                out.innerHTML = `<div class="data-column-table-wrapper"><table class="data-column-table">
+                    <thead><tr><th>Group</th><th>${escapeHtml(agg)}</th><th>n</th></tr></thead>
+                    <tbody>${rows}</tbody></table></div>`;
+            } catch (e) {
+                out.innerHTML = `<p class="qa-empty">${escapeHtml(e.message)}</p>`;
+            }
+        });
+    }
+
+    const xtRun = document.getElementById('qa-xt-run');
+    if (xtRun) {
+        xtRun.addEventListener('click', () => {
+            const row_field = document.getElementById('qa-xt-row').value;
+            const col_field = document.getElementById('qa-xt-col').value;
+            const normalize = document.getElementById('qa-xt-norm').value;
+            const out = document.getElementById('qa-xt-result');
+            try {
+                const res = pipeline.analysis.crossTabulate({ row_field, col_field, normalize });
+                const fmt = v => (normalize === 'none') ? (v || 0).toLocaleString() : Number((v || 0).toFixed(3));
+                const head = `<tr><th></th>${res.col_keys.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr>`;
+                const body = res.row_keys.map(rk =>
+                    `<tr><th>${escapeHtml(rk)}</th>${res.col_keys.map(ck => `<td>${fmt(res.table[rk][ck])}</td>`).join('')}</tr>`
+                ).join('');
+                const stats = `n=${res.n.toLocaleString()} · χ²=${res.chi_square.toFixed(2)} · dof=${res.dof} · p=${res.p_value.toFixed(4)} · Cramér's V=${res.cramers_v.toFixed(3)}`;
+                out.innerHTML = `<div class="data-column-table-wrapper"><table class="data-column-table qa-xtab">
+                    <thead>${head}</thead><tbody>${body}</tbody></table></div>
+                    <p class="qa-stats">${escapeHtml(stats)}</p>`;
+            } catch (e) {
+                out.innerHTML = `<p class="qa-empty">${escapeHtml(e.message)}</p>`;
+            }
+        });
+    }
+}
+
+function setupQuickAnalysisControls() {
+    const openBtn = document.getElementById('quick-analysis-btn');
+    if (openBtn) openBtn.addEventListener('click', openQuickAnalysisModal);
+
+    const closeBtn = document.getElementById('close-quick-analysis');
+    if (closeBtn) closeBtn.addEventListener('click', closeQuickAnalysisModal);
+
+    const modal = document.getElementById('quick-analysis-modal');
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeQuickAnalysisModal();
+        });
+    }
+}
+document.addEventListener('DOMContentLoaded', setupQuickAnalysisControls);
+
 // Enhanced visualization initialization with WebGL support
 function loadVisualizationData() {
     fetch('/api/visualization_data')
@@ -5918,6 +6532,9 @@ async function loadMetadataFromProcessedData() {
 }
 
 function updateMetadataUI() {
+    // Reveal/refresh the "Label clusters" toolbar whenever filters (re)render.
+    if (typeof syncClusterLabelToolbar === 'function') syncClusterLabelToolbar();
+
     // Try to get the filter UI if we don't have it yet
     if (!metadataFilterUI) {
         metadataFilterUI = document.getElementById('metadata-filters-section');
@@ -5979,9 +6596,11 @@ function createFilterUI(field) {
                     <label for="${filterId}">${displayName}</label>
                     <select id="${filterId}" class="metadata-filter" multiple>
                         <option value="">All ${displayName}</option>
-                        ${field.uniqueValues.map(value => 
-                            `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`
-                        ).join('')}
+                        ${field.uniqueValues.map(value => {
+                            // value stays raw (used for filtering); only the label is humanised
+                            const display = field.name === 'cluster_label' ? clusterLabelDisplay(value) : value;
+                            return `<option value="${escapeHtml(value)}">${escapeHtml(display)}</option>`;
+                        }).join('')}
                     </select>
                     <small class="filter-help">${field.uniqueValues.length} categories</small>
                 </div>
@@ -6036,18 +6655,11 @@ function createFilterUI(field) {
             if (field.uniqueValues.length <= 20) {
                 const checkboxes = field.uniqueValues.map((value, idx) => {
                     const checkboxId = `${filterId}-${idx}`;
-                    // For cluster_label field, use custom cluster names if available
-                    let displayValue = escapeHtml(value);
-                    if (field.name === 'cluster_label') {
-                        // Parse cluster ID from "Cluster X" format
-                        const clusterMatch = String(value).match(/^Cluster\s+(\d+)$/i);
-                        if (clusterMatch) {
-                            const clusterId = parseInt(clusterMatch[1], 10);
-                            displayValue = escapeHtml(getClusterName(clusterId));
-                        } else if (String(value).toLowerCase() === 'outlier' || String(value).toLowerCase() === 'noise') {
-                            displayValue = 'Outlier';
-                        }
-                    }
+                    // For cluster_label field, show the custom/AI-generated cluster name
+                    // (value attr stays raw — see clusterLabelDisplay).
+                    const displayValue = field.name === 'cluster_label'
+                        ? escapeHtml(clusterLabelDisplay(value))
+                        : escapeHtml(value);
                     return `
                         <label class="checkbox-option" for="${checkboxId}">
                             <input type="checkbox"

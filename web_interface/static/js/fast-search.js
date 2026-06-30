@@ -1591,7 +1591,7 @@ function initializeQuickSettingsModal() {
                 temperature: config.llm?.temperature ?? defaults.llm?.temperature ?? 0.5,
                 maxTokens: config.llm?.max_tokens ?? defaults.llm?.max_tokens ?? 768,
                 topP: config.llm?.top_p ?? defaults.llm?.top_p ?? 0.9,
-                repeatPenalty: config.llm?.repeat_penalty ?? defaults.llm?.repeat_penalty ?? 1.15,
+                repeatPenalty: config.llm?.repeat_penalty ?? defaults.llm?.repeat_penalty ?? 1.25,
                 systemPrompt: config.rag_prompts?.system_prompt ?? defaults.rag_prompts?.system_prompt ?? '',
                 userTemplate: config.rag_prompts?.user_template ?? defaults.rag_prompts?.user_template ?? '',
                 hydePrompt: config.hyde?.prompt ?? defaults.hyde?.prompt ?? '',
@@ -1658,7 +1658,7 @@ function initializeQuickSettingsModal() {
                         temperature: temperatureSlider ? parseFloat(temperatureSlider.value) : 0.5,
                         max_tokens: maxTokensSlider ? parseInt(maxTokensSlider.value, 10) : 768,
                         top_p: topPSlider ? parseFloat(topPSlider.value) : 0.9,
-                        repeat_penalty: repeatPenaltySlider ? parseFloat(repeatPenaltySlider.value) : 1.15
+                        repeat_penalty: repeatPenaltySlider ? parseFloat(repeatPenaltySlider.value) : 1.25
                     },
                     rag_prompts: {
                         system_prompt: systemPromptTextarea ? systemPromptTextarea.value : '',
@@ -1805,7 +1805,7 @@ function initializeQuickSettingsModal() {
                         temperature: temperatureSlider ? parseFloat(temperatureSlider.value) : 0.5,
                         max_tokens: maxTokensSlider ? parseInt(maxTokensSlider.value, 10) : 768,
                         top_p: topPSlider ? parseFloat(topPSlider.value) : 0.9,
-                        repeat_penalty: repeatPenaltySlider ? parseFloat(repeatPenaltySlider.value) : 1.15
+                        repeat_penalty: repeatPenaltySlider ? parseFloat(repeatPenaltySlider.value) : 1.25
                     },
                     rag_prompts: {
                         system_prompt: systemPromptTextarea ? systemPromptTextarea.value : '',
@@ -1874,7 +1874,7 @@ function initializeQuickSettingsModal() {
                 if (temperatureSlider) temperatureSlider.value = defaults.llm?.temperature ?? 0.5;
                 if (maxTokensSlider) maxTokensSlider.value = defaults.llm?.max_tokens ?? 768;
                 if (topPSlider) topPSlider.value = defaults.llm?.top_p ?? 0.9;
-                if (repeatPenaltySlider) repeatPenaltySlider.value = defaults.llm?.repeat_penalty ?? 1.15;
+                if (repeatPenaltySlider) repeatPenaltySlider.value = defaults.llm?.repeat_penalty ?? 1.25;
                 if (systemPromptTextarea) systemPromptTextarea.value = defaults.rag_prompts?.system_prompt ?? '';
                 if (userTemplateTextarea) userTemplateTextarea.value = defaults.rag_prompts?.user_template ?? '';
                 if (hydeTemperatureSlider) hydeTemperatureSlider.value = defaults.hyde?.temperature ?? 0.2;

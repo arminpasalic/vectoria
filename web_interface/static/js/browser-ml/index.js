@@ -8,10 +8,14 @@ import { BrowserEmbeddings } from './embeddings.js';
 import { BrowserVectorSearch, BM25Search } from './vector-search.js';
 import { BrowserRAG } from './llm-rag.js';
 import { BrowserFileProcessor } from './file-processor.js';
-import { BrowserClustering } from './clustering.js';
+import { BrowserClustering, terminatePyodideWorker } from './clustering.js';
 import { BrowserStorage } from './storage.js';
 import { chunkDocuments } from './chunking/chonkieChunker.js';
 import { embedChunks, buildChunkIndex, groupChunksByParent } from './embedding/tier3ChunkEmbeddings.js';
+import { AnalysisService, cleanLabel } from './analysis.js';
+import { AnnotationsStore } from './annotations-store.js';
+import { MetricsRegistry } from './metrics-registry.js';
+import { SessionsStore, hashCanonical as _hashCanonical } from './sessions-store.js';
 
 export class BrowserMLPipeline {
     constructor() {
@@ -40,7 +44,57 @@ export class BrowserMLPipeline {
         // Anti-throttle state
         this._wakeLock = null;
         this._keepaliveInterval = null;
+
+        // Analysis-layer state (annotations, custom labels, metrics, sessions, subsets)
+        this.annotations = new Map();
+        this.customClusterLabels = new Map(); // clusterId(int) → {label, source, updated_at}
+        this.registeredMetrics = new Map();
+        this.analysisSessions = [];
+        this.subsets = new Map();
+
+        this.analysis       = new AnalysisService(this);
+        this.annotationsApi = new AnnotationsStore(this);
+        this.metrics        = new MetricsRegistry(this);
+        this.sessions       = new SessionsStore(this);
     }
+
+    /**
+     * Set or update a cluster's display label. Mirrors into the existing
+     * window.setClusterNames map so the WebGL viz tooltip / legend pick it up
+     * for free, and dispatches a DOM event so other UI can react.
+     */
+    setCustomClusterLabel(clusterId, label, source = 'mcp') {
+        const cid = Number(clusterId);
+        if (!Number.isFinite(cid) || typeof label !== 'string') return false;
+        // Strip markdown/quotes an AI may wrap the label in (e.g. "**Topic**").
+        const cleaned = cleanLabel(label);
+        if (!cleaned) return false;
+        const entry = { label: cleaned, source, updated_at: Date.now() };
+        this.customClusterLabels.set(cid, entry);
+
+        if (typeof window !== 'undefined') {
+            try {
+                const current = typeof window.getClusterNames === 'function' ? (window.getClusterNames() || {}) : {};
+                const next = { ...current, [cid]: entry.label };
+                if (typeof window.setClusterNames === 'function') {
+                    window.setClusterNames(next);
+                }
+                window.__clusterLabelCache = null;
+                document.dispatchEvent(new CustomEvent('vectoria:cluster-labels-changed', {
+                    detail: { cluster_id: cid, label: entry.label, source }
+                }));
+            } catch (e) {
+                console.warn('cluster label propagation failed:', e.message);
+            }
+        }
+        return true;
+    }
+
+    getCustomClusterLabel(clusterId) {
+        return this.customClusterLabels.get(Number(clusterId)) || null;
+    }
+
+    async hashCanonical(obj) { return _hashCanonical(obj); }
 
     /**
      * ANTI-THROTTLE: Request Screen Wake Lock to prevent browser throttling
@@ -175,6 +229,13 @@ export class BrowserMLPipeline {
         // ANTI-THROTTLE: Request wake lock for entire processing pipeline
         await this._requestWakeLock();
 
+        // MEMORY: Suspend LLM worker during heavy processing (frees 1-3GB GPU/RAM).
+        // Worker will lazy-reload on first RAG/HyDE query after processing.
+        // Skip if LLM was permanently unloaded (workerUnloaded flag).
+        if (this.rag && typeof this.rag.suspendWorker === 'function' && !this.rag.workerUnloaded) {
+            this.rag.suspendWorker('processing-file');
+        }
+
         try {
 
             // 1. Parse file (10%)
@@ -200,16 +261,19 @@ export class BrowserMLPipeline {
 
             // 3. Generate embeddings - 3-TIER STRATEGY (20% → 50%)
             const embeddingStart = Date.now();
-            const texts = documents.map(doc => doc.text);
+            let texts = documents.map(doc => doc.text);
 
             // TIER 1: Parent summaries for clustering/visualization (query mode)
             updateProgress('embedding', 0.20, 'Generating parent summaries for visualization...');
-            const documentSummaries = texts.map(text => {
+            let documentSummaries = texts.map(text => {
                 const tokens = text.split(/\s+/);
                 if (tokens.length <= 256) return text;
                 return tokens.slice(0, 256).join(' ') + '...';
             });
-            
+            // Free `texts` — summaries are now derived and we don't need full doc text array here
+            // (full text still lives on each `documents[i].text`)
+            texts = null;
+
             // Ensure anti-throttle hacks are active before heavy lifting
             await this.embeddings._requestWakeLock();
 
@@ -227,6 +291,10 @@ export class BrowserMLPipeline {
                 }
             });
             updateProgress('embedding', 0.30, 'Parent embeddings complete');
+
+            // MEMORY: Free document summaries — parent embeddings already generated.
+            // For 10K docs at ~256 tokens, this releases ~10-20MB of string data.
+            documentSummaries = null;
 
             // --- STAGE BREAK: PREVENT WORKER OVERLOAD ---
             await new Promise(resolve => setTimeout(resolve, 2000)); // 2s pause
@@ -332,12 +400,12 @@ export class BrowserMLPipeline {
 
             // Chunk BM25 for hybrid RAG retrieval
             const chunkBM25Search = new BM25Search();
-            const chunkDocs = chunks.map(chunk => ({
+            let chunkDocs = chunks.map(chunk => ({
                 id: chunk.chunk_id,
                 text: chunk.text,
                 metadata: chunk.metadata
             }));
-            const chunkIds = chunks.map(c => c.chunk_id);
+            let chunkIds = chunks.map(c => c.chunk_id);
             chunkBM25Search.buildIndex(chunkDocs, chunkIds);
             updateProgress('indexing', 0.52, 'Processing file...');
 
@@ -345,6 +413,15 @@ export class BrowserMLPipeline {
             if (this.rag) {
                 this.rag.setBM25Search(chunkBM25Search);
             }
+
+            // MEMORY: Free intermediate chunk references — they've been absorbed by
+            // chunkVectorSearch (embeddings + text) and chunkBM25Search (text + ids).
+            // Raw `chunks` array and the derived chunkDocs/chunkIds are no longer needed.
+            // `embeddings.chunks` (the EmbeddedChunkRecord array) is still referenced — we keep
+            // it because storage.saveDataset persists it and getVisualizationData reads it.
+            chunkDocs = null;
+            chunkIds = null;
+            chunks = null;
 
             timings.indexing = (Date.now() - indexingStart) / 1000;
 
@@ -561,6 +638,31 @@ export class BrowserMLPipeline {
             this.isProcessing = false;
             // Release wake lock on successful completion
             this._releaseWakeLock();
+
+            // MEMORY: Terminate Pyodide worker now that HDBSCAN is done.
+            // Python runtime + numpy/scipy/sklearn holds ~200-500MB. Worker will lazy-reload
+            // on next HDBSCAN call (only happens when processing a new file).
+            // NOTE: Embedding worker is NOT suspended here — it's needed for every search
+            // and RAG query that follows, so re-initializing would add 3-8s latency per query.
+            // Auto-idle-suspend handles longer idle periods.
+            try { terminatePyodideWorker(); } catch (e) { console.warn('Pyodide teardown failed:', e); }
+
+            // MEMORY: Free the clustering instance's intermediate arrays. The N×15 ND
+            // projection and N×2 viz projection (plus labels/probabilities) are already
+            // captured on currentDataset and persisted to IndexedDB. The clustering
+            // instance survives across runs and would otherwise keep these forever.
+            try {
+                this.clustering.clusteringProjection = null;
+                this.clustering.visualizationProjection = null;
+                this.clustering.labels = null;
+                this.clustering.probabilities = null;
+            } catch (_) {}
+
+            // MEMORY: Clear the embedding cache — it accumulated keys + Float32Arrays
+            // during corpus embedding. The cache only helps repeated identical queries
+            // (rare) and is opportunistic; clearing forces at most one re-embed on
+            // future duplicate queries.
+            try { this.embeddings.clearCache(); } catch (_) {}
             const result = {
                 datasetId: datasetId,
                 numDocuments: documents.length,
@@ -583,6 +685,8 @@ export class BrowserMLPipeline {
             this.isProcessing = false;
             // Release wake lock on error
             this._releaseWakeLock();
+            // MEMORY: tear down Pyodide on error path too — it may be partially loaded
+            try { terminatePyodideWorker(); } catch (_) {}
             console.error('❌ File processing failed:', error);
             throw error;
         }

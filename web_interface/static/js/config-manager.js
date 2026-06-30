@@ -15,7 +15,21 @@
  */
 
 const STORAGE_KEY = 'vectoria_config';
-const STORAGE_VERSION = 2;
+const STORAGE_VERSION = 4;
+
+// Previous default LLM, swapped to the new default in v4 for users who never changed it
+const PREVIOUS_DEFAULT_LLM_ID = 'gemma3-1b-it-q4f16_1-MLC';
+
+// Models removed in v3 — old saved configs pointing here are migrated to the default
+const REMOVED_MODEL_IDS = new Set([
+    'gemma-2-2b-it-q4f32_1-MLC',
+    'gemma-2-9b-it-q4f32_1-MLC',
+    'Qwen2.5-0.5B-Instruct-q4f32_1-MLC',
+    'Qwen2.5-1.5B-Instruct-q4f32_1-MLC',
+    'Qwen2.5-3B-Instruct-q4f32_1-MLC',
+    'Qwen2.5-7B-Instruct-q4f32_1-MLC',
+    'Phi-3.5-mini-instruct-q4f32_1-MLC'
+]);
 
 // Complete default configuration
 export const DEFAULT_CONFIG = {
@@ -23,11 +37,11 @@ export const DEFAULT_CONFIG = {
 
     // LLM / Language Model Settings
     llm: {
-        model_id: 'gemma-2-2b-it-q4f32_1-MLC',
+        model_id: 'gemma-2-2b-it-q4f16_1-MLC',
         temperature: 0.5,
         max_tokens: 768,
         top_p: 0.9,
-        repeat_penalty: 1.15,
+        repeat_penalty: 1.25,
         context_window_size: 2048
     },
 
@@ -147,6 +161,19 @@ export function getConfig() {
                         ...merged.ui_preferences,
                         search_type: 'fast'
                     };
+                }
+                if (parsedVersion < 3) {
+                    // v3: pruned legacy models (Gemma 2, Qwen 2.5, Phi 3.5) and made Gemma 3 1B default
+                    if (merged.llm && REMOVED_MODEL_IDS.has(merged.llm.model_id)) {
+                        merged.llm.model_id = DEFAULT_CONFIG.llm.model_id;
+                    }
+                }
+                if (parsedVersion < 4) {
+                    // v4: default LLM swapped from Gemma 3 1B → Gemma 2 2B. Only migrate users
+                    // who were still on the old default — leave deliberate picks alone.
+                    if (merged.llm && merged.llm.model_id === PREVIOUS_DEFAULT_LLM_ID) {
+                        merged.llm.model_id = DEFAULT_CONFIG.llm.model_id;
+                    }
                 }
                 merged.version = STORAGE_VERSION;
                 saveConfig(merged);
@@ -289,6 +316,11 @@ export function migrateOldConfig() {
     }
 
     if (needsMigration) {
+        // Don't carry forward LLM model IDs that were pruned from the supported list
+        if (updates.llm && REMOVED_MODEL_IDS.has(updates.llm.model_id)) {
+            delete updates.llm.model_id;
+            if (Object.keys(updates.llm).length === 0) delete updates.llm;
+        }
         updateConfig(updates);
     }
 }

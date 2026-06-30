@@ -96,3 +96,21 @@ export async function runHDBSCANPyodide(
 
   return deferred.promise;
 }
+
+/**
+ * Terminate the Pyodide worker, freeing the Python runtime + numpy/scipy/sklearn
+ * (~200-500MB). Safe to call when worker isn't running. The worker will be
+ * lazily re-created on the next runHDBSCANPyodide() call.
+ */
+export function terminatePyodideWorker() {
+  if (worker) {
+    try { worker.terminate(); } catch (_) {}
+    worker = null;
+    workerReadyPromise = null;
+    pendingRequests.forEach(({ reject }) => {
+      try { reject(new Error('Pyodide worker terminated')); } catch (_) {}
+    });
+    pendingRequests.clear();
+    console.log('🐍 Pyodide worker terminated — Python runtime freed');
+  }
+}

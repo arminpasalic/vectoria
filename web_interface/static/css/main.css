@@ -238,6 +238,13 @@ body.upload-scrollable {
     overflow-y: scroll;
 }
 
+/* When the upload tab is active, allow the page to scroll if its content
+   doesn't fit the viewport (e.g. short Safari windows in non-fullscreen
+   mode where the Advanced Settings button would otherwise be clipped). */
+body:has(#upload-tab.active) {
+    overflow-y: auto;
+}
+
 html.light {
     background: #F0F0F0;
 }
@@ -633,7 +640,8 @@ html.dark .modal-overlay {
     box-shadow: 0 32px 70px rgba(0, 0, 0, 0.7) !important;
     max-height: calc(100vh - 40px);
     height: auto;
-    max-width: 600px;
+    width: min(820px, 94vw);
+    max-width: 820px;
 }
 
 #advanced-settings-modal .settings-category {
@@ -871,7 +879,7 @@ h6 {
 /* Container and layout - More breathing room */
 .container {
     width: 100%;
-    max-width: 1800px;
+    max-width: 100%;
     margin: 0 auto;
     padding: 0 32px;
     box-sizing: border-box;
@@ -1194,11 +1202,20 @@ header {
 #upload-tab {
     max-width: 640px;
     margin: 0 auto;
-    padding: 0 24px;
+    padding: 24px 24px 48px;
     display: flex;
     flex-direction: column;
-    justify-content: center;
+    justify-content: flex-start;
     flex: 1;
+}
+
+/* Center the upload column vertically only when the viewport is tall
+   enough to fit all of its content; on shorter windows fall back to
+   top-aligned scrolling so nothing (e.g. Advanced Settings) is clipped. */
+@media (min-height: 900px) {
+    #upload-tab {
+        justify-content: center;
+    }
 }
 
 body.upload-scrollable #upload-tab {
@@ -1917,6 +1934,46 @@ html.dark .data-column-table th {
 .data-column-table td:nth-child(4) { width: 14%; }
 .data-column-table th:nth-child(5),
 .data-column-table td:nth-child(5) { width: 28%; }
+
+/* Quick Analysis modal */
+#quick-analysis-content { display: flex; flex-direction: column; gap: 22px; }
+
+.qa-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin: 0 0 10px;
+}
+
+.qa-empty { font-size: 12px; color: var(--text-muted); margin: 4px 0 0; }
+.qa-result { margin-top: 10px; }
+.qa-stats { font-size: 11px; color: var(--text-muted); margin: 8px 2px 0; }
+
+.qa-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.qa-select {
+    padding: 6px 10px;
+    font-size: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--surface-border);
+    background: var(--surface-subtle);
+    color: var(--text-primary);
+}
+
+/* Cross-tab table needs auto layout (variable column count) */
+.data-column-table.qa-xtab { table-layout: auto; }
+.data-column-table.qa-xtab th,
+.data-column-table.qa-xtab td { width: auto; }
+.data-column-table.qa-xtab td { text-align: right; }
+.data-column-table.qa-xtab th:first-child,
+.data-column-table.qa-xtab tbody th { text-align: left; font-weight: 600; }
 
 html.dark .data-column-table td {
     border-color: rgba(255, 255, 255, 0.04);
@@ -2883,7 +2940,6 @@ html.dark #result-count option {
     flex-direction: column;
     min-width: var(--text-column-min);
     width: 100%;
-    max-width: 900px;
     transition: none;
     position: sticky;
     top: 20px;
@@ -6393,3 +6449,114 @@ html.dark .explore-content {
     border-top: 1px solid var(--surface-border);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
+
+/* ---- Cluster labeling: Filters-card toolbar ---- */
+.card-header-with-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.cluster-label-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.cluster-summarizer-quick {
+    font-size: 12px;
+    padding: 5px 8px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--surface-border);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.btn-label-clusters {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--accent-color);
+    background: var(--accent-color);
+    color: var(--bg-primary);
+    cursor: pointer;
+    transition: opacity 0.15s ease, transform 0.1s ease;
+}
+.btn-label-clusters:hover { opacity: 0.88; }
+.btn-label-clusters:active { transform: scale(0.97); }
+.btn-label-clusters:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---- Cluster labeling: persistent top progress banner ---- */
+.progress-banner {
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%) translateY(-120%);
+    min-width: 320px;
+    max-width: min(640px, 92vw);
+    background: var(--text-primary);
+    color: var(--bg-primary);
+    padding: 10px 14px;
+    border-radius: 0 0 10px 10px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.progress-banner.visible {
+    transform: translateX(-50%) translateY(0);
+}
+
+.progress-banner-text {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.progress-banner-text span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.progress-banner-bar {
+    flex: 0 0 120px;
+    height: 6px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--bg-primary) 30%, transparent);
+    overflow: hidden;
+}
+.progress-banner-bar > div {
+    height: 100%;
+    width: 0%;
+    background: var(--accent-color);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.progress-banner-cancel {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    color: var(--bg-primary);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.7;
+    padding: 0 2px;
+}
+.progress-banner-cancel:hover { opacity: 1; }

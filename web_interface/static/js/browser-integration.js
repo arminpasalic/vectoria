@@ -11,7 +11,18 @@ window.browserML = {
     pipeline: pipeline,
     isReady: false,
     currentFile: null,
-    processingStatus: null
+    processingStatus: null,
+    unloadLLM() {
+        // Set global flag first — llm-rag.js checks this in initialize()
+        window.__vectoriaLLMUnloaded = true;
+        if (pipeline?.rag) {
+            pipeline.rag.unloadWorker();
+        }
+        // If rag not yet created, the flag will be picked up when initialize() runs
+    },
+    get llmLoaded() {
+        return pipeline?.rag?.workerLoaded ?? false;
+    }
 };
 
 function normalizeIndexValue(value) {
@@ -191,6 +202,11 @@ function matchesFiltersFallback(point, metadataFilters) {
     }
 
     return true;
+}
+
+// Expose for analysis-layer consumers (AnalysisService.filterToSubset, etc.)
+if (typeof window !== 'undefined') {
+    window.matchesFiltersFallback = matchesFiltersFallback;
 }
 
 function collectDocIdsFromActiveFilters(filters, documents) {
@@ -447,7 +463,7 @@ export async function initializeBrowserML() {
                     setModelSizeBadgeFinal('llm', downloadTracking.llm.totalBytes);
                     // Cache real LLM download size for model-change modal
                     try {
-                        const llmModelId = window.ConfigManager?.getConfig()?.llm?.model_id || localStorage.getItem('vectoria_llm_model') || 'gemma-2-2b-it-q4f32_1-MLC';
+                        const llmModelId = window.ConfigManager?.getConfig()?.llm?.model_id || localStorage.getItem('vectoria_llm_model') || 'gemma-2-2b-it-q4f16_1-MLC';
                         const cached = JSON.parse(localStorage.getItem('vectoria_model_download_sizes') || '{}');
                         cached[llmModelId] = formatBytes(downloadTracking.llm.totalBytes);
                         localStorage.setItem('vectoria_model_download_sizes', JSON.stringify(cached));
@@ -608,6 +624,13 @@ export async function handleBrowserFileProcessing(textColumn, options = {}) {
             showToast(`Processed ${result.numDocuments} documents successfully!`, 'success');
             activateTab('explore-tab');
         }
+
+        // MEMORY: drop the raw parsed file + File/Blob reference. Extracted text and
+        // metadata already live on pipeline.currentDataset.documents — parsedData is a
+        // duplicate of the source rows (all columns) and the File holds its blob backing
+        // storage. Tens of MB for moderate CSVs, hundreds for large Excel files.
+        window.browserML.parsedData = null;
+        window.browserML.currentFile = null;
 
         return result;
 

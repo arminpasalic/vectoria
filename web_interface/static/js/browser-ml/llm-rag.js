@@ -4,7 +4,7 @@
  * Runs Gemma 2 2B locally in browser via WebGPU
  */
 
-import { CreateWebWorkerMLCEngine, prebuiltAppConfig } from "https://esm.run/@mlc-ai/web-llm@0.2.83";
+import { CreateWebWorkerMLCEngine, prebuiltAppConfig } from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.83/+esm";
 import { getModelConstraints } from "../model-constraints.js";
 
 // Load cached real download sizes from previous downloads
@@ -13,6 +13,36 @@ try {
     window.__webllmRealDownloadSizes = cached ? JSON.parse(cached) : {};
 } catch (_) {
     window.__webllmRealDownloadSizes = {};
+}
+
+// Stall-based timeout: rejects only if no progress for `ms` milliseconds.
+// More forgiving than a wall-clock timeout for multi-GB downloads on slow links.
+function makeStallTimeout(ms, label) {
+    let timeoutId;
+    let rejectFn;
+    const promise = new Promise((_, reject) => {
+        rejectFn = reject;
+        timeoutId = setTimeout(() => {
+            const err = new Error(`${label} stalled — no progress for ${Math.round(ms / 1000)}s`);
+            err.code = 'download_timeout';
+            reject(err);
+        }, ms);
+    });
+    return {
+        promise,
+        reset() {
+            if (timeoutId) clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+                const err = new Error(`${label} stalled — no progress for ${Math.round(ms / 1000)}s`);
+                err.code = 'download_timeout';
+                rejectFn(err);
+            }, ms);
+        },
+        clear() {
+            if (timeoutId) clearTimeout(timeoutId);
+            timeoutId = null;
+        }
+    };
 }
 
 export class BrowserRAG {
@@ -27,12 +57,19 @@ export class BrowserRAG {
         this.shouldAbort = false;
         this.currentGenerationReject = null;
         this.needsReinit = false; // Flag to track if engine needs reinitialization after abort
+        this.workerUnloaded = false; // Set true by unloadWorker() to permanently block re-init
+
+        // Soft suspension state (distinct from unloadWorker which is permanent).
+        // suspended = worker terminated to free RAM, but allowed to lazily re-init on next use.
+        this.isSuspended = false;
+        this._idleTimer = null;
+        this._idleTimeoutMs = 5 * 60 * 1000; // 5 min idle → auto-suspend
 
         // Load saved configuration
         const savedConfig = this.loadSavedConfig();
 
         // Load model ID from saved config or use default
-        this.modelId = savedConfig.model_id || "Qwen3-1.7B-q4f32_1-MLC";
+        this.modelId = savedConfig.model_id || "gemma-2-2b-it-q4f16_1-MLC";
 
         // Get model constraints
         this.modelConstraints = getModelConstraints(this.modelId);
@@ -43,7 +80,7 @@ export class BrowserRAG {
         this.temperature = savedConfig.temperature || 0.5;
         this.maxTokens = savedConfig.max_tokens || 1024;
         this.topP = savedConfig.top_p || 0.9;
-        this.repeatPenalty = savedConfig.repeat_penalty || 1.15;
+        this.repeatPenalty = savedConfig.repeat_penalty || 1.25;
         this.maxContextLength = savedConfig.context_window_size || this.modelConstraints.contextWindow || 2048;
 
         // Load RAG parameters
@@ -92,6 +129,7 @@ Answer based on the documents above:`;
      */
     abort() {
         this.shouldAbort = true;
+        this._clearIdleTimer();
 
         // Try to interrupt the WebLLM engine directly
         if (this.engine && typeof this.engine.interruptGenerate === 'function') {
@@ -101,6 +139,70 @@ Answer based on the documents above:`;
         if (this.currentGenerationReject) {
             this.currentGenerationReject(new Error('Generation stopped by user'));
         }
+    }
+
+    unloadWorker() {
+        this._clearIdleTimer();
+        if (this.worker) {
+            try { this.worker.terminate(); } catch (_) {}
+            this.worker = null;
+        }
+        this.engine = null;
+        this.isInitialized = false;
+        this.needsReinit = false;
+        this.isSuspended = false;
+        this.workerUnloaded = true; // Block any future re-initialization
+        console.log('🤖 LLM worker unloaded — re-init blocked until page reload');
+    }
+
+    /**
+     * Soft-suspend the LLM worker to free GPU/RAM during heavy stages.
+     * Unlike unloadWorker(), this allows lazy re-initialization on next query.
+     * Safe to call when worker is not loaded (no-op).
+     */
+    suspendWorker(reason = 'idle') {
+        this._clearIdleTimer();
+        if (!this.worker && !this.isInitialized) {
+            return;
+        }
+        if (this.workerUnloaded) {
+            return; // Permanent unload already in effect
+        }
+        if (this.worker) {
+            try { this.worker.terminate(); } catch (_) {}
+            this.worker = null;
+        }
+        this.engine = null;
+        this.isInitialized = false;
+        this.needsReinit = false;
+        this.isSuspended = true;
+        console.log(`🤖 LLM worker suspended (${reason}) — will lazy-reload on next query`);
+    }
+
+    /**
+     * Start (or restart) the idle auto-suspend timer.
+     * Called after each successful generation to suspend if user goes idle.
+     */
+    _scheduleIdleSuspend() {
+        this._clearIdleTimer();
+        if (this.workerUnloaded) return;
+        this._idleTimer = setTimeout(() => {
+            this._idleTimer = null;
+            if (this.isInitialized && !this.workerUnloaded) {
+                this.suspendWorker('idle-timeout');
+            }
+        }, this._idleTimeoutMs);
+    }
+
+    _clearIdleTimer() {
+        if (this._idleTimer) {
+            clearTimeout(this._idleTimer);
+            this._idleTimer = null;
+        }
+    }
+
+    get workerLoaded() {
+        return this.worker !== null && this.isInitialized;
     }
 
     /**
@@ -116,6 +218,10 @@ Answer based on the documents above:`;
      * Reinitialize the engine (needed after abort corrupts the engine state)
      */
     async reinitializeEngine() {
+        if (this.workerUnloaded) {
+            console.log('🤖 LLM reinitializeEngine() skipped — worker intentionally unloaded');
+            return;
+        }
         // Terminate the old worker
         if (this.worker) {
             try {
@@ -135,11 +241,33 @@ Answer based on the documents above:`;
      * Check if engine needs reinitialization and do it if needed
      */
     async ensureEngineReady() {
+        if (this.workerUnloaded) {
+            throw new Error('Local LLM is unloaded. Use query_rag_external (Claude as RAG) instead, or reload the page to re-enable the local LLM.');
+        }
+        // If soft-suspended, transparently resume (model files are still cached in IndexedDB)
+        if (this.isSuspended && !this.isInitialized) {
+            console.log('🤖 LLM was suspended — resuming for query...');
+            this.isSuspended = false;
+            await this.initialize();
+        }
         if (this.needsReinit) {
             await this.reinitializeEngine();
         }
         if (!this.isInitialized) {
             throw new Error('LLM not initialized. Call initialize() first.');
+        }
+        // Verify engine can actually respond — ModelNotLoadedError means the worker
+        // process was created but reload() never completed (e.g. after IDB cache wipe)
+        try {
+            await this.engine.runtimeStatsText();
+        } catch (e) {
+            const msg = e?.message || '';
+            if (msg.includes('ModelNotLoaded') || msg.includes('not loaded')) {
+                console.warn('⚠️ Engine exists but model not loaded, reinitializing...');
+                this.isInitialized = false;
+                this._idbRetried = false;
+                await this.reinitializeEngine();
+            }
         }
     }
 
@@ -186,6 +314,11 @@ Answer based on the documents above:`;
      * @param {Function} onProgress - Progress callback
      */
     async initialize(onProgress = null) {
+        if (this.workerUnloaded || window.__vectoriaLLMUnloaded) {
+            this.workerUnloaded = true;
+            console.log('🤖 LLM initialize() skipped — worker intentionally unloaded');
+            return;
+        }
         if (this.isInitialized) {
             return;
         }
@@ -212,34 +345,63 @@ Answer based on the documents above:`;
             });
 
             const captureModelId = this.modelId;
-            this.engine = await CreateWebWorkerMLCEngine(this.worker, this.modelId, {
-                initProgressCallback: (progress) => {
-                    // Capture real total download size from progress text (e.g. "3.2GB/7.1GB")
-                    if (progress.text) {
-                        const sizeMatch = progress.text.match(/\/([\d.]+)\s*(GB|MB)/i);
-                        if (sizeMatch) {
-                            const val = parseFloat(sizeMatch[1]);
-                            const unit = sizeMatch[2].toUpperCase();
-                            const sizeStr = val + ' ' + unit;
-                            if (!window.__webllmRealDownloadSizes[captureModelId] || window.__webllmRealDownloadSizes[captureModelId] !== sizeStr) {
-                                window.__webllmRealDownloadSizes[captureModelId] = sizeStr;
-                                try { localStorage.setItem('vectoria_model_download_sizes', JSON.stringify(window.__webllmRealDownloadSizes)); } catch (_) {}
+            const stall = makeStallTimeout(120000, 'LLM model download');
+            const enginePromise = CreateWebWorkerMLCEngine(
+                this.worker,
+                this.modelId,
+                {
+                    initProgressCallback: (progress) => {
+                        stall.reset();
+                        // Capture real total download size from progress text (e.g. "3.2GB/7.1GB")
+                        if (progress.text) {
+                            const sizeMatch = progress.text.match(/\/([\d.]+)\s*(GB|MB)/i);
+                            if (sizeMatch) {
+                                const val = parseFloat(sizeMatch[1]);
+                                const unit = sizeMatch[2].toUpperCase();
+                                const sizeStr = val + ' ' + unit;
+                                if (!window.__webllmRealDownloadSizes[captureModelId] || window.__webllmRealDownloadSizes[captureModelId] !== sizeStr) {
+                                    window.__webllmRealDownloadSizes[captureModelId] = sizeStr;
+                                    try { localStorage.setItem('vectoria_model_download_sizes', JSON.stringify(window.__webllmRealDownloadSizes)); } catch (_) {}
+                                }
                             }
                         }
-                    }
-                    // Only send to UI callback for modal display
-                    if (onProgress) {
-                        onProgress({
-                            status: 'loading',
-                            text: progress.text,
-                            progress: progress.progress || 0
-                        });
-                    }
+                        // Only send to UI callback for modal display
+                        if (onProgress) {
+                            onProgress({
+                                status: 'loading',
+                                text: progress.text,
+                                progress: progress.progress || 0
+                            });
+                        }
+                    },
+                    appConfig: { ...prebuiltAppConfig, cacheBackend: "indexeddb" }
                 },
-                // Set context window size
-                context_window_size: this.maxContextLength,
-                appConfig: { ...prebuiltAppConfig, cacheBackend: "indexeddb" }
-            });
+                // chatOpts (third arg) — overrides for mlc-chat-config.json.
+                // Disable sliding window so models like Gemma 3 (which default to SWA=512)
+                // don't fail WebLLM's "only one of context_window_size / sliding_window_size
+                // can be positive" check.
+                {
+                    context_window_size: this.maxContextLength,
+                    sliding_window_size: -1,
+                    attention_sink_size: 0
+                }
+            );
+            try {
+                this.engine = await Promise.race([enginePromise, stall.promise]);
+            } finally {
+                stall.clear();
+            }
+
+            // If unloadWorker() was called while we were awaiting, honor it
+            if (this.workerUnloaded) {
+                if (this.worker) { try { this.worker.terminate(); } catch (_) {} this.worker = null; }
+                this.engine = null;
+                console.log = originalConsoleLog;
+                console.info = originalConsoleInfo;
+                console.warn = originalConsoleWarn;
+                console.log('🤖 LLM init completed but discarded — worker was unloaded during init');
+                return;
+            }
 
             this.isInitialized = true;
             console.log = originalConsoleLog;
@@ -254,15 +416,44 @@ Answer based on the documents above:`;
             console.info = originalConsoleInfo;
             console.warn = originalConsoleWarn;
             if (this.worker) {
-                try {
-                    this.worker.terminate();
-                } catch (_) { /* noop */ }
+                try { this.worker.terminate(); } catch (_) {}
                 this.worker = null;
             }
-            console.error('❌ Failed to initialize LLM:', error);
+
+            // ArtifactIndexedDBCache error = stale/corrupt IndexedDB cache for this model
+            // Retry once with cache flushed for this model
             const rawMsg = error instanceof Error ? error.message : (typeof error === 'string' ? error : JSON.stringify(error));
+            if (rawMsg.includes('ArtifactIndexedDBCache') && !this._idbRetried) {
+                this._idbRetried = true;
+                originalConsoleWarn('⚠️ Stale IndexedDB cache detected, clearing and retrying...');
+                try {
+                    // Clear all caches named after the model (WebLLM uses cache names matching model id)
+                    const cacheKeys = await caches.keys();
+                    for (const key of cacheKeys) {
+                        if (key.includes(this.modelId) || key.includes('webllm') || key.includes('mlc')) {
+                            await caches.delete(key);
+                        }
+                    }
+                    // Delete IndexedDB stores WebLLM uses — wrap in Promise so we can await
+                    const dbNames = ['webllm-cache', `webllm/${this.modelId}`, this.modelId];
+                    await Promise.all(dbNames.map(dbName => new Promise(resolve => {
+                        try {
+                            const req = indexedDB.deleteDatabase(dbName);
+                            req.onsuccess = resolve;
+                            req.onerror = resolve;
+                            req.onblocked = resolve;
+                        } catch (_) { resolve(); }
+                    })));
+                } catch (_) {}
+                // Tail-call the retry — finally block will restore console after this returns
+                return this.initialize(onProgress);
+            }
+
+            console.error('❌ Failed to initialize LLM:', error);
             let msg = rawMsg;
-            if (rawMsg.includes('Cache') && rawMsg.includes('network')) {
+            if (rawMsg.includes('ArtifactIndexedDBCache')) {
+                msg = `Model cache is corrupted. Please go to Advanced Settings → Language Model → "Clear Model Cache" and try again.`;
+            } else if (rawMsg.includes('Cache') && rawMsg.includes('network')) {
                 msg = `Model download failed (network error). This usually means:\n` +
                     `• The model files couldn't be fetched from HuggingFace\n` +
                     `• A firewall or VPN is blocking the download\n` +
@@ -659,10 +850,20 @@ ${question}`;
                 metadata: result.metadata
             });
 
+            // Schedule idle auto-suspend (5 min) to free GPU/RAM if user goes idle
+            this._scheduleIdleSuspend();
+
             return result;
         } catch (error) {
             console.error('❌ Answer generation failed:', error);
-            throw new Error(`Failed to generate answer: ${error.message}`);
+            const msg = error?.message || '';
+            // ModelNotLoadedError: engine exists but model wasn't loaded — force full reinit next call
+            if (msg.includes('ModelNotLoaded') || msg.includes('not loaded before')) {
+                this.isInitialized = false;
+                this._idbRetried = false;
+                this.needsReinit = true;
+            }
+            throw new Error(`Failed to generate answer: ${msg}`);
         }
     }
 
@@ -787,6 +988,9 @@ ${question}`;
 
         // Final cleanup pass for any remaining think tags
         visibleAnswer = this._stripThinkingTokens(visibleAnswer);
+
+        // Schedule idle auto-suspend after streaming completes
+        this._scheduleIdleSuspend();
 
         return {
             answer: visibleAnswer,
@@ -1374,4 +1578,118 @@ ${question}`;
 
         return chunks;
     }
+
+    /**
+     * Generate text from a raw prompt without retrieval. Used for cluster
+     * summarization and other prompt-only tasks.
+     */
+    async generateRaw(prompt, options = {}) {
+        await this.ensureEngineReady();
+        const {
+            temperature = Math.min(0.7, this.modelConstraints.temp[1]),
+            maxTokens: rawMax = Math.min(256, this.modelConstraints.maxTokens[1]),
+            topP = 0.9,
+            systemPrompt = null
+        } = options;
+
+        const maxTokens = Math.max(
+            this.modelConstraints.maxTokens[0],
+            Math.min(this.modelConstraints.maxTokens[1], rawMax)
+        );
+
+        const messages = [];
+        if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+        messages.push({ role: 'user', content: prompt });
+
+        const completion = await this.engine.chat.completions.create({
+            messages,
+            temperature,
+            max_tokens: maxTokens,
+            top_p: topP,
+            stream: true
+        });
+
+        let text = '';
+        const thinkFilter = this._createThinkFilter();
+        for await (const chunk of completion) {
+            if (this.shouldAbort) {
+                this.needsReinit = true;
+                throw new Error('Generation aborted');
+            }
+            const content = chunk.choices[0]?.delta?.content || '';
+            text += thinkFilter.push(content);
+        }
+        text += thinkFilter.flush();
+        return this._stripThinkingTokens(text).trim();
+    }
+
+    /**
+     * RAG query with per-sentence provenance. Runs the standard `query()` flow,
+     * then splits the generated answer into sentence-level "claims" and links
+     * each one back to the retrieved sources by maximum text overlap. Confidence
+     * is the best per-source overlap score in [0, 1].
+     *
+     * Returns: { answer, claims:[{claim, supporting_doc_indices, confidence}], sources, metadata }
+     */
+    async queryWithCitations(question, questionEmbedding, options = {}) {
+        const base = await this.query(question, questionEmbedding, options);
+        const answer = base?.answer || base?.text || '';
+        const sources = base?.sources || base?.results || [];
+        const confidenceThreshold = options.confidenceThreshold ?? 0.0;
+
+        const sourceTexts = sources.map(s => s?.text || s?.metadata?.text || '');
+        const sourceTokens = sourceTexts.map(t => tokenize(t));
+
+        const sentences = splitSentences(answer);
+        const claims = sentences.map(sentence => {
+            const claimTokens = tokenize(sentence);
+            const supporting = [];
+            for (let i = 0; i < sourceTokens.length; i++) {
+                const overlap = jaccard(claimTokens, sourceTokens[i]);
+                if (overlap > 0) supporting.push({ index: i, overlap });
+            }
+            supporting.sort((a, b) => b.overlap - a.overlap);
+            const top = supporting.slice(0, 3);
+            const confidence = top[0]?.overlap || 0;
+            return {
+                claim: sentence,
+                supporting_doc_indices: top
+                    .filter(t => t.overlap >= confidenceThreshold)
+                    .map(t => sources[t.index]?.index ?? t.index),
+                confidence
+            };
+        }).filter(c => c.confidence >= confidenceThreshold || confidenceThreshold === 0);
+
+        return {
+            answer,
+            claims,
+            sources,
+            metadata: base?.metadata || null
+        };
+    }
+}
+
+function splitSentences(text) {
+    if (!text) return [];
+    // Simple splitter: punctuation followed by whitespace+capital, or newlines.
+    const raw = text.split(/(?<=[.!?])\s+(?=[A-ZÆØÅ])|\n+/);
+    return raw.map(s => s.trim()).filter(s => s.length > 0);
+}
+
+function tokenize(text) {
+    if (!text) return new Set();
+    return new Set(
+        text.toLowerCase()
+            .replace(/[^a-z0-9æøåäöü\s]/gi, ' ')
+            .split(/\s+/)
+            .filter(t => t.length > 2)
+    );
+}
+
+function jaccard(a, b) {
+    if (!a.size || !b.size) return 0;
+    let inter = 0;
+    for (const t of a) if (b.has(t)) inter++;
+    const union = a.size + b.size - inter;
+    return union === 0 ? 0 : inter / union;
 }

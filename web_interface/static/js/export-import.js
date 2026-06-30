@@ -136,9 +136,10 @@ async function buildUnifiedExportPayload(documents, exportType = 'full', metadat
         || (typeof window !== 'undefined' ? window.metadataSchema : null)
         || {};
 
-    // Build unified payload
+    // Build unified payload (3.1 adds the optional `analysis` block — annotations,
+    // custom cluster labels, registered metrics, saved sessions, named subsets)
     const payload = {
-        version: '3.0',
+        version: '3.1',
         export_type: exportType,
         exported_at: new Date().toISOString(),
 
@@ -202,6 +203,30 @@ async function buildUnifiedExportPayload(documents, exportType = 'full', metadat
         if (clusterNames && Object.keys(clusterNames).length > 0) {
             payload.custom_cluster_names = clusterNames;
         }
+    }
+
+    // Analysis-layer state (v3.1)
+    try {
+        const annotations = pipeline.annotationsApi?.serialize?.() ?? [];
+        const customClusterLabels = [...(pipeline.customClusterLabels?.entries?.() ?? [])]
+            .map(([cluster_id, v]) => ({ cluster_id, ...v }));
+        const registeredMetrics = pipeline.metrics?.serialize?.() ?? [];
+        const analysisSessions = pipeline.sessions?.list?.() ?? [];
+        const subsets = [...(pipeline.subsets?.entries?.() ?? [])]
+            .map(([subset_id, v]) => ({ subset_id, ...v }));
+
+        if (annotations.length || customClusterLabels.length || registeredMetrics.length
+            || analysisSessions.length || subsets.length) {
+            payload.analysis = {
+                annotations,
+                customClusterLabels,
+                registeredMetrics,
+                analysisSessions,
+                subsets
+            };
+        }
+    } catch (e) {
+        console.warn('Failed to serialize analysis state for export:', e.message);
     }
 
     return payload;
@@ -395,8 +420,8 @@ async function importDataset(file) {
         const data = JSON.parse(text);
 
         // Validate format
-        if (data.version !== '3.0') {
-            throw new Error(`Unsupported format version: ${data.version}. Please use version 3.0.`);
+        if (data.version !== '3.0' && data.version !== '3.1') {
+            throw new Error(`Unsupported format version: ${data.version}. Please use version 3.0 or 3.1.`);
         }
 
         if (!data.documents || !Array.isArray(data.documents)) {
@@ -411,6 +436,28 @@ async function importDataset(file) {
         // Restore custom cluster names if present in export
         if (data.custom_cluster_names && typeof window.setClusterNames === 'function') {
             window.setClusterNames(data.custom_cluster_names);
+        }
+
+        // v3.1 analysis-layer state (annotations / labels / metrics / sessions / subsets)
+        if (data.analysis) {
+            try {
+                pipeline.annotationsApi?.hydrate?.(data.analysis.annotations);
+                if (Array.isArray(data.analysis.customClusterLabels)) {
+                    for (const { cluster_id, label, source } of data.analysis.customClusterLabels) {
+                        pipeline.setCustomClusterLabel?.(cluster_id, label, source || 'session');
+                    }
+                }
+                pipeline.metrics?.hydrate?.(data.analysis.registeredMetrics);
+                pipeline.sessions?.hydrate?.(data.analysis.analysisSessions);
+                if (Array.isArray(data.analysis.subsets) && pipeline.subsets) {
+                    pipeline.subsets.clear();
+                    for (const { subset_id, ...rest } of data.analysis.subsets) {
+                        pipeline.subsets.set(subset_id, rest);
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to restore analysis state:', e.message);
+            }
         }
 
         // Return visualization data

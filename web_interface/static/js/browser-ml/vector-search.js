@@ -340,6 +340,106 @@ export class BrowserVectorSearch {
     this.metadata = [];
     this.isBuilt = false;
   }
+
+  /**
+   * Run multiple query vectors and fuse the result lists.
+   * Accepts already-embedded vectors only — embedding live text strings is the
+   * pipeline's responsibility (see AnalysisService.multiVectorSearch).
+   *
+   * @param {Array<{vector: number[]|Float32Array, label?: string}>} queryVectors
+   * @param {{k?:number, rrfK?:number, fuse?:'rrf'|'mean', perQueryK?:number, includeMetadata?:boolean, filter?:Function}} opts
+   */
+  multiVectorSearch(queryVectors, opts = {}) {
+    if (!Array.isArray(queryVectors) || !queryVectors.length) {
+      return { results: [], n_queries: 0 };
+    }
+    const k = opts.k ?? 10;
+    const perQueryK = opts.perQueryK ?? Math.max(k * 2, 20);
+    const rrfK = opts.rrfK ?? 60;
+    const fuseMode = opts.fuse ?? 'rrf';
+
+    const perQuery = queryVectors.map((q, qi) => {
+      const vec = q.vector || q;
+      try {
+        return this.search(vec, perQueryK, {
+          includeMetadata: opts.includeMetadata ?? true,
+          filter: opts.filter || null
+        });
+      } catch (e) {
+        console.warn(`multiVectorSearch query ${qi} failed:`, e.message);
+        return [];
+      }
+    });
+
+    const fused = fuseMode === 'mean'
+      ? fuseMean(perQuery, { k, idField: 'doc_id' })
+      : fuseRRF(perQuery, { k, rrfK, idField: 'doc_id' });
+
+    return { results: fused, n_queries: queryVectors.length };
+  }
+}
+
+/**
+ * Reciprocal Rank Fusion of multiple ranked lists. Each list is an array of
+ * objects with a stable `id` field (default `doc_id`). Returns the top `k`
+ * fused entries with per-query attribution.
+ */
+export function fuseRRF(perQueryLists, { k = 10, rrfK = 60, idField = 'doc_id' } = {}) {
+  const map = new Map(); // id → {item, fused, contributing_queries}
+  perQueryLists.forEach((list, qi) => {
+    list.forEach((item, rank) => {
+      const id = item?.[idField] ?? item?.index ?? item?.id;
+      if (id === undefined || id === null) return;
+      const contribution = 1 / (rrfK + rank + 1);
+      const existing = map.get(id);
+      if (existing) {
+        existing.fused += contribution;
+        existing.contributing_queries.push({ q: qi, rank, score: item.score ?? null });
+      } else {
+        map.set(id, {
+          item,
+          fused: contribution,
+          contributing_queries: [{ q: qi, rank, score: item.score ?? null }]
+        });
+      }
+    });
+  });
+  const merged = [...map.values()]
+    .sort((a, b) => b.fused - a.fused)
+    .slice(0, k)
+    .map(({ item, fused, contributing_queries }) => ({
+      ...item,
+      score: fused,
+      contributing_queries
+    }));
+  return merged;
+}
+
+export function fuseMean(perQueryLists, { k = 10, idField = 'doc_id' } = {}) {
+  const map = new Map();
+  perQueryLists.forEach((list, qi) => {
+    list.forEach((item, rank) => {
+      const id = item?.[idField] ?? item?.index ?? item?.id;
+      if (id === undefined || id === null) return;
+      const score = item.score ?? 0;
+      const existing = map.get(id);
+      if (existing) {
+        existing.sum += score;
+        existing.count++;
+        existing.contributing_queries.push({ q: qi, rank, score });
+      } else {
+        map.set(id, { item, sum: score, count: 1, contributing_queries: [{ q: qi, rank, score }] });
+      }
+    });
+  });
+  return [...map.values()]
+    .map(({ item, sum, count, contributing_queries }) => ({
+      ...item,
+      score: sum / count,
+      contributing_queries
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k);
 }
 
 //////////////////////////

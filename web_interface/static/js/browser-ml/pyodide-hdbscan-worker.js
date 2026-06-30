@@ -1,14 +1,14 @@
-import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.mjs';
+import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v0.29.4/full/pyodide.mjs';
 
 let pyodideReadyPromise;
 let runHdbscanPy;
 
 async function initPyodide() {
   const pyodide = await loadPyodide({
-    indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.2/full/'
+    indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.29.4/full/'
   });
 
-  await pyodide.loadPackage(['numpy', 'scikit-learn', 'scipy'], { messageCallback: () => {} });
+  await pyodide.loadPackage(['numpy', 'scikit-learn'], { messageCallback: () => {} });
 
   await pyodide.runPythonAsync(`
 import numpy as np
@@ -254,15 +254,34 @@ def run_hdbscan(data, min_cluster_size, min_samples, metric, documents=None, key
   return pyodide;
 }
 
+const PYODIDE_INIT_TIMEOUT_MS = 120000;
+
+function withTimeout(promise, ms, label) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err = new Error(`${label} timed out after ${Math.round(ms / 1000)}s`);
+      err.code = 'download_timeout';
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+}
+
 function ensurePyodide() {
   if (!pyodideReadyPromise) {
-    pyodideReadyPromise = initPyodide()
+    pyodideReadyPromise = withTimeout(initPyodide(), PYODIDE_INIT_TIMEOUT_MS, 'Pyodide download')
       .then((pyodide) => {
         self.postMessage({ type: 'ready' });
         return pyodide;
       })
       .catch((error) => {
-        self.postMessage({ type: 'error', id: null, error: error?.message || String(error) });
+        self.postMessage({
+          type: 'error',
+          id: null,
+          error: error?.message || String(error),
+          reason: error?.code === 'download_timeout' ? 'download_timeout' : 'init_failed'
+        });
         throw error;
       });
   }

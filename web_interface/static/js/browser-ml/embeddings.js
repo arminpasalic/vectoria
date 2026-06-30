@@ -6,7 +6,7 @@
  * - Smart caching with deduplication
  */
 
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.5/+esm';
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/+esm';
 
 // ===== PERFORMANCE OPTIMIZATIONS =====
 
@@ -27,6 +27,20 @@ try {
 
 } catch (_) { /* best-effort tuning */ }
 
+const EMBED_INIT_TIMEOUT_MS = 180000;
+
+function withTimeout(promise, ms, label) {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+            const err = new Error(`${label} timed out after ${Math.round(ms / 1000)}s`);
+            err.code = 'download_timeout';
+            reject(err);
+        }, ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+}
+
 export class BrowserEmbeddings {
     constructor() {
         // Use Xenova model name (required for @xenova/transformers)
@@ -34,7 +48,7 @@ export class BrowserEmbeddings {
         this.embedder = null;
         this.dimension = 384;
         this.cache = new Map(); // (mode + normalized text) → embedding cache for deduplication
-        this.cacheMaxSize = 5000; // LRU eviction threshold
+        this.cacheMaxSize = 500; // LRU eviction threshold (only useful for repeated identical queries)
         this._cacheInsertionOrder = []; // Track insertion order for LRU eviction
         this.isInitialized = false;
         this.activeDevice = null; // Actual device used by loaded model
@@ -79,6 +93,11 @@ export class BrowserEmbeddings {
         this.workerReady = false;
         this.workerPendingMessages = new Map(); // Track pending worker responses: batchId → {resolve, reject}
         this._nextRequestId = 0; // Monotonic counter for unique batch IDs
+
+        // Auto-suspend embedding worker after this many ms of idle (no embed() calls).
+        // Mirrors the LLM idle-suspend pattern in llm-rag.js.
+        this._embedIdleTimer = null;
+        this._embedIdleTimeoutMs = 10 * 60 * 1000;
 
         const resolvedDevice = this._resolveDeviceTarget();
         const deviceLabel = resolvedDevice === 'webgpu' ? 'WebGPU (GPU)' : 'CPU/WASM';
@@ -415,7 +434,11 @@ export class BrowserEmbeddings {
                 }
             }
 
-            this.embedder = await pipeline('feature-extraction', this.modelName, options);
+            this.embedder = await withTimeout(
+                pipeline('feature-extraction', this.modelName, options),
+                EMBED_INIT_TIMEOUT_MS,
+                'Embedding model download'
+            );
             this.isInitialized = true;
             this.activeDevice = targetDevice;
             console.log = originalConsoleLog;
@@ -436,7 +459,11 @@ export class BrowserEmbeddings {
                     if (onProgress) {
                         cpuOptions.progress_callback = options.progress_callback;
                     }
-                    this.embedder = await pipeline('feature-extraction', this.modelName, cpuOptions);
+                    this.embedder = await withTimeout(
+                        pipeline('feature-extraction', this.modelName, cpuOptions),
+                        EMBED_INIT_TIMEOUT_MS,
+                        'Embedding model download (CPU fallback)'
+                    );
                     this.isInitialized = true;
                     this.activeDevice = 'cpu';
                     return;
@@ -546,6 +573,9 @@ export class BrowserEmbeddings {
      * @returns {Promise<number[][]>} Array of embedding vectors
      */
     async embed(texts, options = {}) {
+        // Cancel any pending idle-suspend; a fresh embed is in flight.
+        this._clearEmbedIdleTimer();
+
         // Reload config before each embedding operation to pick up setting changes
         const freshConfig = this.loadSavedConfig();
         this._applyConfigOverrides(freshConfig);
@@ -748,8 +778,9 @@ export class BrowserEmbeddings {
                 const start = j * embeddingDim;
                 const end = start + embeddingDim;
 
-                // Create Float32Array view (fast, minimal memory)
-                const embedding = new Float32Array(output.data.slice(start, end));
+                // MEMORY: subarray() returns a view (no copy); Float32Array(view) copies once.
+                // Old code used .slice() which copied twice (once for slice, once for ctor).
+                const embedding = new Float32Array(output.data.subarray(start, end));
 
                 // Store in result array at original index
                 const originalIndex = batchIndices[j];
@@ -807,6 +838,9 @@ export class BrowserEmbeddings {
         //   - Avg per batch: ${(totalTime / totalBatches).toFixed(2)}s
         //   - Mode: ${embeddingMode}
         //   - Cache size: ${this.cache.size} entries (~${Math.round(this.cache.size * this.dimension * 4 / 1024 / 1024)}MB)${perfWarning}`);
+
+        // Auto-suspend after 10 min idle to free ONNX/WebGPU memory
+        this._scheduleEmbedIdleSuspend();
 
         return embeddings;
     }
@@ -910,6 +944,43 @@ export class BrowserEmbeddings {
     clearCache() {
         this.cache.clear();
         this._cacheInsertionOrder = [];
+    }
+
+    /**
+     * Dispose the loaded embedding pipeline and free ONNX tensors / model memory.
+     * Useful when switching models or shutting down. Cache is preserved unless
+     * `clearCache=true`. The instance can be reused after calling initialize() again.
+     */
+    async dispose({ clearCache = false } = {}) {
+        // Tear down worker if active
+        if (this.worker) {
+            try { this.worker.terminate(); } catch (_) {}
+            this.worker = null;
+            this.workerReady = false;
+            this.workerPendingMessages.clear();
+        }
+
+        // Dispose transformers.js pipeline (releases ONNX session + tensor memory)
+        if (this.embedder) {
+            try {
+                if (typeof this.embedder.dispose === 'function') {
+                    await this.embedder.dispose();
+                } else if (this.embedder.model && typeof this.embedder.model.dispose === 'function') {
+                    await this.embedder.model.dispose();
+                }
+            } catch (e) {
+                console.warn('⚠️ Failed to dispose embedding pipeline:', e?.message || e);
+            }
+            this.embedder = null;
+        }
+
+        this.isInitialized = false;
+        this.activeDevice = null;
+        this._releaseWakeLock();
+
+        if (clearCache) {
+            this.clearCache();
+        }
     }
 
     /**
@@ -1107,6 +1178,59 @@ export class BrowserEmbeddings {
     }
 
     /**
+     * Schedule auto-suspend of the embedding worker if no embed() calls happen
+     * within the idle timeout. Called at the end of each successful embed.
+     */
+    _scheduleEmbedIdleSuspend() {
+        this._clearEmbedIdleTimer();
+        this._embedIdleTimer = setTimeout(() => {
+            this._embedIdleTimer = null;
+            // Only suspend if the worker (or main-thread embedder) is still loaded
+            if (this.isInitialized || this.worker) {
+                this.suspendWorker('idle-timeout');
+            }
+        }, this._embedIdleTimeoutMs);
+    }
+
+    _clearEmbedIdleTimer() {
+        if (this._embedIdleTimer) {
+            clearTimeout(this._embedIdleTimer);
+            this._embedIdleTimer = null;
+        }
+    }
+
+    /**
+     * Suspend the embedding worker to free ONNX model memory (~50-150MB).
+     * Worker will be lazy-reloaded on the next embed() call.
+     * Cache is preserved. Safe to call when worker isn't running.
+     */
+    suspendWorker(reason = 'idle') {
+        this._clearEmbedIdleTimer();
+        if (this.worker) {
+            try { this.worker.terminate(); } catch (_) {}
+            this.worker = null;
+            this.workerReady = false;
+            this.workerPendingMessages.clear();
+        }
+        // Main-thread pipeline: best-effort dispose
+        if (this.embedder) {
+            try {
+                const e = this.embedder;
+                if (typeof e.dispose === 'function') {
+                    Promise.resolve(e.dispose()).catch(() => {});
+                } else if (e.model && typeof e.model.dispose === 'function') {
+                    Promise.resolve(e.model.dispose()).catch(() => {});
+                }
+            } catch (_) {}
+            this.embedder = null;
+        }
+        this.isInitialized = false;
+        this.activeDevice = null;
+        this._releaseWakeLock();
+        console.log(`🔤 Embedding worker suspended (${reason}) — will lazy-reload on next embed`);
+    }
+
+    /**
      * Terminate and restart the worker.
      * Useful when the worker becomes unresponsive or hangs on a task.
      */
@@ -1263,9 +1387,11 @@ export class BrowserEmbeddings {
                         });
                     });
 
-                    // Store results in embeddings array and cache
+                    // Store results in embeddings array and cache.
+                    // Worker now transfers Float32Arrays (zero-copy) — use them directly when possible.
                     for (let j = 0; j < batchEmbeddings.length; j++) {
-                        const embedding = new Float32Array(batchEmbeddings[j]);
+                        const raw = batchEmbeddings[j];
+                        const embedding = raw instanceof Float32Array ? raw : new Float32Array(raw);
                         const originalIdx = batchIndices[j];
                         const cacheKey = batchCacheKeys[j];
 
@@ -1330,6 +1456,9 @@ export class BrowserEmbeddings {
         const totalTime = (performance.now() - startTime) / 1000;
         // Release wake lock after processing completes
         this._releaseWakeLock();
+
+        // Auto-suspend after 10 min idle to free ONNX/WebGPU memory
+        this._scheduleEmbedIdleSuspend();
 
         return embeddings;
     }

@@ -7,13 +7,13 @@
     "dev": "npx serve web_interface -p 5050",
     "network": "lsof -ti:5050 | xargs kill -9 2>/dev/null || true && node start-network.js",
     "https": "lsof -ti:5050 | xargs kill -9 2>/dev/null || true && ./start-https.sh",
-    "build": "echo 'Static build ready - no build step required'",
+    "build": "node scripts/build-mcp.js",
     "preview": "npx serve web_interface -p 5050"
   },
   "dependencies": {
     "@chonkiejs/core": "^0.0.5",
-    "@mlc-ai/web-llm": "^0.2.46",
-    "@xenova/transformers": "^2.17.2",
+    "@huggingface/transformers": "4.2.0",
+    "@mlc-ai/web-llm": "0.2.83",
     "hdbscan-ts": "^1.0.3",
     "hnswlib-node": "^3.0.0",
     "hnswlib-wasm": "^0.8.2",

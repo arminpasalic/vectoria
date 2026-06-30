@@ -244,6 +244,139 @@ This proves that sophisticated AI applications can run entirely in the browser.
 
 ---
 
+## MCP Server
+
+Exposes Vectoria's semantic search, RAG, visualization data, clustering, metadata, and config as MCP tools to Claude Desktop, OpenCode, Cursor, Zed, Continue.dev, and any other MCP-compatible AI client.
+
+### Prerequisites
+
+- **Node.js v18+** — runs the MCP server. Install from [nodejs.org](https://nodejs.org).
+- **Python 3** — used by the install script to configure your AI clients. macOS: `xcode-select --install`; Linux: install the `python3` package; or [python.org](https://python.org).
+
+### Setup
+
+**1. Install dependencies**
+
+```bash
+cd mcp-server
+npm install
+```
+
+**2. Run the install script (auto-configures all detected clients)**
+
+```bash
+curl -fsSL https://vectoria.vercel.app/static/install-mcp.sh | bash
+```
+
+The script detects which AI clients are installed on your machine and configures all of them automatically. Example output:
+
+```
+✅ Configured:  Claude Desktop, Cursor
+⏭  Not found:   OpenCode, Zed, Continue.dev
+```
+
+**3. Enable in Vectoria**
+
+1. Open Vectoria in your browser (e.g. `https://vectoria.vercel.app` or your local `http://localhost:5050`)
+2. Go to **Advanced Settings → MCP Bridge** → enable the toggle
+3. Status shows **● Connected · Claude Desktop** (or whichever client connected)
+
+> The MCP bridge runs locally on your machine (`ws://localhost:3700`). Your browser tab connects to it directly — no data leaves your computer, regardless of where Vectoria itself is hosted.
+
+### Supported Clients
+
+| Client | Auto-configured | Config path |
+|---|---|---|
+| Claude Desktop | ✅ | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Cursor | ✅ | `~/.cursor/mcp.json` |
+| OpenCode | ✅ | `~/.config/opencode/config.json` |
+| Zed | ✅ | `~/.config/zed/settings.json` |
+| Continue.dev | ✅ | `~/.continue/config.json` |
+
+**Manual config (if needed)**
+
+Claude Desktop / Cursor (`mcpServers` object):
+```json
+{
+  "mcpServers": {
+    "vectoria": {
+      "command": "node",
+      "args": ["/Users/you/.vectoria-mcp/index.js"]
+    }
+  }
+}
+```
+
+OpenCode (`~/.config/opencode/config.json`):
+```json
+{
+  "mcp": {
+    "vectoria": {
+      "type": "local",
+      "command": ["node", "/Users/you/.vectoria-mcp/index.js"]
+    }
+  }
+}
+```
+
+Zed (`~/.config/zed/settings.json`):
+```json
+{
+  "context_servers": {
+    "vectoria": {
+      "command": {
+        "path": "node",
+        "args": ["/Users/you/.vectoria-mcp/index.js"]
+      }
+    }
+  }
+}
+```
+
+Continue.dev (`~/.continue/config.json`):
+```json
+{
+  "mcpServers": [
+    {
+      "name": "vectoria",
+      "command": "node",
+      "args": ["/Users/you/.vectoria-mcp/index.js"]
+    }
+  ]
+}
+```
+
+### Available Tools (16)
+
+| Category | Tools |
+|---|---|
+| Search | `search`, `hybrid_search`, `get_document`, `get_documents_by_cluster` |
+| RAG | `query_rag_local` (local ONNX), `query_rag_external` (AI client answers) |
+| Data | `get_visualization_data`, `get_cluster_summary`, `get_dataset_stats`, `get_point_neighbors` |
+| Metadata | `get_metadata_schema`, `set_metadata_filters`, `clear_metadata_filters` |
+| Config | `get_config`, `set_config` |
+| Dataset | `list_datasets`, `get_dataset_info` |
+
+### Architecture
+
+```
+AI Client (stdio) → ~/.vectoria-mcp/index.js → BrowserBridge (ws://localhost:3700)
+                                                       ↕
+                                           SharedWorker in browser tab
+                                                       ↕
+                                           window.browserMLFetch() (existing pipeline)
+```
+
+### Uninstall
+
+```bash
+curl -fsSL https://vectoria.vercel.app/static/install-mcp.sh | bash -s -- --uninstall
+```
+
+Removes `~/.vectoria-mcp/` and cleans the Vectoria entry from all detected client configs.
+
+---
+
 ## Contributing
 
 Contributions are incredibly welcome! Whether you're fixing a bug, improving the docs, or adding a new feature, every bit helps.

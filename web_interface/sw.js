@@ -3,29 +3,36 @@
  * Enables offline support and faster loading through intelligent caching
  */
 
-const CACHE_VERSION = 'vectoria-v3';
+// Bump BUILD_ID on every deploy. The service worker uses it for the cache
+// name (so old caches get evicted in the activate handler) and appends it as
+// a ?v= query string to every precached URL (so a stale Vercel/CDN copy is
+// not served from the previous deploy's immutable cache).
+const BUILD_ID = '2026-05-18-01';
+const CACHE_VERSION = `vectoria-${BUILD_ID}`;
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
+
+const v = (path) => `${path}?v=${BUILD_ID}`;
 
 // Assets to cache immediately on install
 const STATIC_ASSETS = [
     '/',
     '/index.html',
-    '/static/css/main.css?v=20241016',
-    '/static/css/browser-ml.css',
-    '/static/js/viz.js',
-    '/static/js/webgl-renderer.js',
-    '/static/js/fast-search.js',
-    '/static/js/search-enhancement.js',
-    '/static/js/vectoria.js?v=20241016',
-    '/static/js/browser-ml/index.js',
-    '/static/js/browser-ml/embeddings.js',
-    '/static/js/browser-ml/vector-search.js',
-    '/static/js/browser-ml/llm-rag.js',
-    '/static/js/browser-ml/file-processor.js',
-    '/static/js/browser-ml/clustering.js',
-    '/static/js/browser-ml/storage.js',
-    '/static/js/browser-integration.js',
+    v('/static/css/main.css'),
+    v('/static/css/browser-ml.css'),
+    v('/static/js/viz.js'),
+    v('/static/js/webgl-renderer.js'),
+    v('/static/js/fast-search.js'),
+    v('/static/js/search-enhancement.js'),
+    v('/static/js/vectoria.js'),
+    v('/static/js/browser-ml/index.js'),
+    v('/static/js/browser-ml/embeddings.js'),
+    v('/static/js/browser-ml/vector-search.js'),
+    v('/static/js/browser-ml/llm-rag.js'),
+    v('/static/js/browser-ml/file-processor.js'),
+    v('/static/js/browser-ml/clustering.js'),
+    v('/static/js/browser-ml/storage.js'),
+    v('/static/js/browser-integration.js'),
     '/static/img/favicon.svg',
     '/static/img/icon.ico'
 ];

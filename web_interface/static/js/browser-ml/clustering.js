@@ -18,7 +18,9 @@
  */
 
 import { createUMAP } from './umap-wasm-adapter.js';
-import { runHDBSCANPyodide } from './hdbscan-pyodide.js';
+import { runHDBSCANPyodide, terminatePyodideWorker } from './hdbscan-pyodide.js';
+
+export { terminatePyodideWorker };
 
 export class BrowserClustering {
     constructor(options = {}) {
@@ -1265,3 +1267,82 @@ export class BrowserClustering {
 
 // Export singleton instance
 export const clustering = new BrowserClustering();
+
+/**
+ * Adaptive exemplar count based on cluster size.
+ * <20 → 3, 20-100 → 6, 100-500 → 9, >500 → 12-15.
+ */
+export function selectAdaptiveExemplarCount(clusterSize) {
+    if (clusterSize <= 0) return 0;
+    if (clusterSize < 20) return Math.min(3, clusterSize);
+    if (clusterSize < 100) return Math.min(6, clusterSize);
+    if (clusterSize < 500) return Math.min(9, clusterSize);
+    return Math.min(15, clusterSize);
+}
+
+/**
+ * Quantile-based exemplar selection over HDBSCAN probabilities.
+ *
+ * Picks `n` documents spread across confidence levels — high, mid, and low —
+ * rather than only the top-confidence members. This captures topic diversity
+ * inside a cluster and reduces bias toward the densest core.
+ *
+ * @param {number[]} docIndices  candidate doc indices (already filtered to a single cluster)
+ * @param {number[]|Float32Array} probabilities  HDBSCAN per-doc probabilities (indexed by global doc index)
+ * @param {number} n  number of exemplars to return
+ * @returns {{index:number, probability:number, quantile:number, band:'high'|'mid'|'low'}[]}
+ */
+export function selectQuantileExemplars(docIndices, probabilities, n) {
+    if (!docIndices?.length || n <= 0) return [];
+    const items = docIndices.map(i => ({
+        index: i,
+        probability: probabilities?.[i] ?? 0
+    }));
+    items.sort((a, b) => a.probability - b.probability);
+
+    if (items.length <= n) {
+        return items.map((it, k) => ({
+            ...it,
+            quantile: items.length > 1 ? k / (items.length - 1) : 0.5,
+            band: bandFor(items.length > 1 ? k / (items.length - 1) : 0.5)
+        }));
+    }
+
+    // Evenly spaced quantile targets across (0, 1) — symmetric, e.g.
+    // n=3 → 0.167/0.5/0.833 ; n=6 → 0.083/0.25/0.417/0.583/0.75/0.917
+    const targets = [];
+    for (let k = 0; k < n; k++) targets.push((k + 0.5) / n);
+
+    const chosen = [];
+    const usedIdx = new Set();
+    for (const q of targets) {
+        const targetPos = q * (items.length - 1);
+        // Find nearest unused
+        let bestIdx = -1;
+        let bestDist = Infinity;
+        for (let i = 0; i < items.length; i++) {
+            if (usedIdx.has(i)) continue;
+            const d = Math.abs(i - targetPos);
+            if (d < bestDist) {
+                bestDist = d;
+                bestIdx = i;
+            }
+        }
+        if (bestIdx >= 0) {
+            usedIdx.add(bestIdx);
+            chosen.push({
+                ...items[bestIdx],
+                quantile: q,
+                band: bandFor(q)
+            });
+        }
+    }
+    return chosen;
+}
+
+function bandFor(q) {
+    if (q < 1 / 3) return 'low';
+    if (q < 2 / 3) return 'mid';
+    return 'high';
+}
+
