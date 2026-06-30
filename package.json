@@ -8,6 +8,9 @@
     "network": "lsof -ti:5050 | xargs kill -9 2>/dev/null || true && node start-network.js",
     "https": "lsof -ti:5050 | xargs kill -9 2>/dev/null || true && ./start-https.sh",
     "build": "node scripts/build-mcp.js",
+    "stamp": "node scripts/stamp-version.js",
+    "stamp:check": "node scripts/stamp-version.js --check",
+    "release": "node scripts/stamp-version.js && node scripts/build-mcp.js",
     "preview": "npx serve web_interface -p 5050"
   },
   "dependencies": {

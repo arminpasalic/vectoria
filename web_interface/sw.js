@@ -3,11 +3,13 @@
  * Enables offline support and faster loading through intelligent caching
  */
 
-// Bump BUILD_ID on every deploy. The service worker uses it for the cache
-// name (so old caches get evicted in the activate handler) and appends it as
-// a ?v= query string to every precached URL (so a stale Vercel/CDN copy is
-// not served from the previous deploy's immutable cache).
-const BUILD_ID = '2026-06-30-01';
+// BUILD_ID is auto-stamped by `npm run stamp` (scripts/stamp-version.js) from
+// the git date + short SHA, and kept in sync with the ?v= query strings in
+// index.html. Do NOT edit by hand — run `npm run stamp` before committing a
+// release. The SW uses it for the cache name (so old caches get evicted in the
+// activate handler) and appends it as a ?v= query string to every precached
+// URL (so a stale Vercel/CDN immutable copy is not served after a deploy).
+const BUILD_ID = '2026-06-30-7ecaa2f';
 const CACHE_VERSION = `vectoria-${BUILD_ID}`;
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
@@ -22,8 +24,13 @@ const STATIC_ASSETS = [
     v('/static/css/browser-ml.css'),
     v('/static/js/viz.js'),
     v('/static/js/webgl-renderer.js'),
+    v('/static/js/hyde-handler.js'),
     v('/static/js/fast-search.js'),
     v('/static/js/search-enhancement.js'),
+    v('/static/js/browser-capabilities.js'),
+    v('/static/js/config-manager.js'),
+    v('/static/js/model-constraints.js'),
+    v('/static/js/export-import.js'),
     v('/static/js/vectoria.js'),
     v('/static/js/browser-ml/index.js'),
     v('/static/js/browser-ml/embeddings.js'),
