@@ -265,7 +265,7 @@ npm install
 **2. Run the install script (auto-configures all detected clients)**
 
 ```bash
-curl -fsSL https://vectoria.vercel.app/static/install-mcp.sh | bash
+curl -fsSL https://vectoria.app/static/install-mcp.sh | bash
 ```
 
 The script detects which AI clients are installed on your machine and configures all of them automatically. Example output:
@@ -277,7 +277,7 @@ The script detects which AI clients are installed on your machine and configures
 
 **3. Enable in Vectoria**
 
-1. Open Vectoria in your browser (e.g. `https://vectoria.vercel.app` or your local `http://localhost:5050`)
+1. Open Vectoria in your browser (e.g. `https://vectoria.app` or your local `http://localhost:5050`)
 2. Go to **Advanced Settings → MCP Bridge** → enable the toggle
 3. Status shows **● Connected · Claude Desktop** (or whichever client connected)
 
@@ -370,7 +370,7 @@ AI Client (stdio) → ~/.vectoria-mcp/index.js → BrowserBridge (ws://localhost
 ### Uninstall
 
 ```bash
-curl -fsSL https://vectoria.vercel.app/static/install-mcp.sh | bash -s -- --uninstall
+curl -fsSL https://vectoria.app/static/install-mcp.sh | bash -s -- --uninstall
 ```
 
 Removes `~/.vectoria-mcp/` and cleans the Vectoria entry from all detected client configs.

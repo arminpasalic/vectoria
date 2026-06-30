@@ -6,7 +6,7 @@
 set -euo pipefail
 
 INSTALL_DIR="$HOME/.vectoria-mcp"
-BASE_URL="https://vectoria.vercel.app"
+BASE_URL="https://vectoria.app"
 UNINSTALL=false
 
 while [[ $# -gt 0 ]]; do
