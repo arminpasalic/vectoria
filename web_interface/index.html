@@ -1498,10 +1498,19 @@
                     }
                 }
 
-                // Clean up any previously registered service workers
+                // Register the service worker for offline support and faster
+                // repeat loads. The SW evicts caches from previous BUILD_IDs in
+                // its activate handler, and reloads the page once a new worker
+                // takes control so users never linger on stale assets.
                 if ('serviceWorker' in navigator) {
-                    navigator.serviceWorker.getRegistrations()
-                        .then(regs => regs.forEach(reg => reg.unregister()));
+                    let refreshing = false;
+                    navigator.serviceWorker.addEventListener('controllerchange', () => {
+                        if (refreshing) return;
+                        refreshing = true;
+                        window.location.reload();
+                    });
+                    navigator.serviceWorker.register('/sw.js')
+                        .catch(err => console.warn('⚠️ Service worker registration failed:', err));
                 }
 
                 const MODEL_PROMPT_KEY = 'vectoria_models_prompted';

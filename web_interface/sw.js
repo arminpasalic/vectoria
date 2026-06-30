@@ -33,17 +33,22 @@ const STATIC_ASSETS = [
     v('/static/js/browser-ml/clustering.js'),
     v('/static/js/browser-ml/storage.js'),
     v('/static/js/browser-integration.js'),
-    '/static/img/favicon.svg',
-    '/static/img/icon.ico'
+    '/static/img/favicon.svg'
 ];
 
-// Install event - cache static assets
+// Install event - cache static assets.
+// Cache each asset individually (not cache.addAll) so a single missing/404
+// URL can't reject the whole install and silently disable the service worker.
 self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(STATIC_CACHE)
-            .then((cache) => {
-                return cache.addAll(STATIC_ASSETS);
-            })
+            .then((cache) => Promise.all(
+                STATIC_ASSETS.map((asset) =>
+                    cache.add(asset).catch((err) =>
+                        console.warn(`[SW] Skipped precaching ${asset}:`, err.message)
+                    )
+                )
+            ))
             .then(() => self.skipWaiting())
             .catch((err) => console.error('[SW] Cache failed:', err))
     );
