@@ -14,6 +14,10 @@
       "destination": "/web_interface/index.html"
     },
     {
+      "source": "/static/(.*)",
+      "destination": "/web_interface/static/$1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/web_interface/$1"
     }
