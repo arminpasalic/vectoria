@@ -5641,49 +5641,76 @@ function enhanceSettingsWithModelDownloads() {
                     clearCacheBtn.disabled = true;
                     clearCacheBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Resetting...';
 
-                    // 1. Clear all Cache API caches
-                    if ('caches' in window) {
-                        const cacheNames = await caches.keys();
-                        for (const cacheName of cacheNames) {
-                            await caches.delete(cacheName);
-                        }
-                    }
-
-                    // 2. Clear all IndexedDB databases
-                    const dbNames = [
-                        'webllm', 'webllm-cache', 'mlc-llm',
-                        'vectoria-embeddings', 'vectoria-indexes', 'vectoria-data',
-                        'localforage', 'transformers-cache'
-                    ];
-                    for (const dbName of dbNames) {
+                    // 1. Unregister all service workers FIRST, so a wedged/old
+                    //    worker can't keep serving stale assets or re-populate
+                    //    caches while we clear them. (This was the main gap that
+                    //    let corrupted profiles survive a "reset".)
+                    if ('serviceWorker' in navigator) {
                         try {
-                            await indexedDB.deleteDatabase(dbName);
-                        } catch (err) {
-                            // Database might not exist, ignore
+                            const regs = await navigator.serviceWorker.getRegistrations();
+                            await Promise.all(regs.map(r => r.unregister()));
+                        } catch (e) {
+                            console.warn('Unable to unregister service workers:', e);
                         }
                     }
 
-                    // 3. Clear localStorage
+                    // 2. Clear all Cache API caches
+                    if ('caches' in window) {
+                        try {
+                            const cacheNames = await caches.keys();
+                            await Promise.all(cacheNames.map(n => caches.delete(n)));
+                        } catch (e) {
+                            console.warn('Unable to clear Cache Storage:', e);
+                        }
+                    }
+
+                    // 3. Delete ALL IndexedDB databases. Enumerate them when the
+                    //    browser supports it (Chromium); fall back to a known
+                    //    list for Firefox/Safari where databases() is missing.
+                    //    A hardcoded list alone misses version-specific DBs that
+                    //    WebLLM / transformers.js create.
                     try {
-                        const keysToRemove = [];
-                        for (let i = 0; i < localStorage.length; i++) {
-                            const key = localStorage.key(i);
-                            if (key && key.startsWith('vectoria')) {
-                                keysToRemove.push(key);
+                        let dbNames = [];
+                        if (indexedDB.databases) {
+                            const dbs = await indexedDB.databases();
+                            dbNames = dbs.map(d => d.name).filter(Boolean);
+                        }
+                        // Always include known names as a fallback / belt-and-braces.
+                        const fallback = [
+                            'webllm', 'webllm-cache', 'webllm/model', 'webllm/wasm',
+                            'mlc-llm', 'mlc-cache',
+                            'vectoria-embeddings', 'vectoria-indexes', 'vectoria-data',
+                            'localforage', 'transformers-cache', 'keyval-store'
+                        ];
+                        for (const name of new Set([...dbNames, ...fallback])) {
+                            try {
+                                await new Promise((resolve) => {
+                                    const req = indexedDB.deleteDatabase(name);
+                                    req.onsuccess = req.onerror = req.onblocked = () => resolve();
+                                });
+                            } catch (_) { /* ignore individual failures */ }
+                        }
+                    } catch (e) {
+                        console.warn('Unable to enumerate/delete IndexedDB:', e);
+                    }
+
+                    // 4. Clear ALL localStorage and sessionStorage (not just
+                    //    vectoria* keys) — a full reset should leave nothing,
+                    //    including third-party (WebLLM) and UI-preference keys.
+                    try { localStorage.clear(); } catch (e) { console.warn('Unable to clear localStorage:', e); }
+                    try { sessionStorage.clear(); } catch (e) { console.warn('Unable to clear sessionStorage:', e); }
+
+                    // 5. Best-effort wipe of the Origin Private File System,
+                    //    used by some model loaders for large files.
+                    try {
+                        if (navigator.storage && navigator.storage.getDirectory) {
+                            const root = await navigator.storage.getDirectory();
+                            for await (const [name] of root.entries()) {
+                                try { await root.removeEntry(name, { recursive: true }); } catch (_) {}
                             }
                         }
-                        keysToRemove.forEach(key => localStorage.removeItem(key));
                     } catch (e) {
-                        console.warn('Unable to clear localStorage:', e);
-                    }
-                    // 4. Call API to clear server-side data (if any)
-                    try {
-                        await fetch('/api/delete_all_data', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' }
-                        });
-                    } catch (err) {
-                        // API might not exist or fail, continue anyway
+                        // OPFS may be unavailable or empty; ignore.
                     }
 
                     showToast('All data cleared. Reloading...', 'success');
