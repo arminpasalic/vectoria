@@ -1,4 +1,6 @@
-const RELAY_URL = 'ws://localhost:3700';
+// Keep this explicit and in sync with mcp-server/bridge.js. `localhost` can
+// resolve to IPv4 while Node has selected an IPv6-only listener on macOS.
+const RELAY_URL = 'ws://127.0.0.1:3700';
 let ws = null;
 const ports = [];
 

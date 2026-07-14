@@ -4,7 +4,7 @@
  * Runs Gemma 2 2B locally in browser via WebGPU
  */
 
-import { CreateWebWorkerMLCEngine, prebuiltAppConfig } from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.83/+esm";
+import { CreateWebWorkerMLCEngine, prebuiltAppConfig } from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm";
 import { getModelConstraints } from "../model-constraints.js";
 
 // Load cached real download sizes from previous downloads

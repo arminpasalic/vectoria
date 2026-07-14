@@ -51,4 +51,4 @@ await server.connect(transport);
   }
 })();
 
-console.error('[Vectoria MCP] Server ready. Open http://localhost:5050 and enable MCP Bridge in Advanced Settings.');
+console.error('[Vectoria MCP] Server ready. Open Vectoria in your browser and enable MCP Bridge in Advanced Settings.');

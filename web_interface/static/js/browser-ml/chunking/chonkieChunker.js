@@ -3,7 +3,54 @@
  * Implements RAG-optimized document chunking with character-based splitting
  */
 
-import { TokenChunker } from 'https://esm.run/@chonkiejs/core';
+// Pin the browser build to the same tested version as package.json. An
+// unversioned CDN import can introduce breaking changes between deployments.
+import {
+    FastChunker,
+    RecursiveChunker,
+    SentenceChunker,
+    TokenChunker
+} from 'https://esm.run/@chonkiejs/core@0.0.11';
+
+const SUPPORTED_STRATEGIES = new Set(['token', 'recursive', 'sentence', 'fast']);
+
+async function createChunker(options) {
+    const strategy = SUPPORTED_STRATEGIES.has(options.strategy) ? options.strategy : 'token';
+    const safeOverlap = Math.max(0, Math.min(options.chunkOverlap, options.chunkSize - 1));
+
+    switch (strategy) {
+        case 'recursive':
+            return RecursiveChunker.create({
+                tokenizer: 'character',
+                chunkSize: options.chunkSize,
+                minCharactersPerChunk: options.minChunkSize
+            });
+        case 'sentence':
+            return SentenceChunker.create({
+                tokenizer: 'character',
+                chunkSize: options.chunkSize,
+                chunkOverlap: safeOverlap,
+                minSentencesPerChunk: options.sentenceMinSentences,
+                minCharactersPerSentence: options.sentenceMinCharacters,
+                delim: options.sentenceDelimiters,
+                includeDelim: options.sentenceIncludeDelimiter
+            });
+        case 'fast':
+            return FastChunker.create({
+                chunkSize: options.chunkSize,
+                delimiters: options.fastDelimiters,
+                prefix: options.fastPrefix,
+                consecutive: options.fastConsecutive,
+                forwardFallback: options.fastForwardFallback
+            });
+        default:
+            return TokenChunker.create({
+                tokenizer: 'character',
+                chunkSize: options.chunkSize,
+                chunkOverlap: safeOverlap
+            });
+    }
+}
 
 /**
  * ChunkRecord structure
@@ -26,9 +73,18 @@ import { TokenChunker } from 'https://esm.run/@chonkiejs/core';
  */
 export async function chunkDocument(docId, text, options = {}) {
     const {
+        strategy = 'token',
         chunkSize = 512,
         chunkOverlap = 128,
-        minChunkSize = 50
+        minChunkSize = 50,
+        sentenceMinSentences = 1,
+        sentenceMinCharacters = 12,
+        sentenceDelimiters = ['. ', '! ', '? ', '\n'],
+        sentenceIncludeDelimiter = 'prev',
+        fastDelimiters = '\n.?',
+        fastPrefix = false,
+        fastConsecutive = false,
+        fastForwardFallback = true
     } = options;
 
     // Validate inputs
@@ -51,12 +107,11 @@ export async function chunkDocument(docId, text, options = {}) {
     }
 
     try {
-        // Create TokenChunker with character-based tokenization
-        // TokenChunker supports chunkOverlap, RecursiveChunker does not
-        const chunker = await TokenChunker.create({
-            chunkSize: chunkSize,
-            chunkOverlap: chunkOverlap,
-            minCharactersPerChunk: minChunkSize
+        const chunker = await createChunker({
+            strategy, chunkSize, chunkOverlap, minChunkSize,
+            sentenceMinSentences, sentenceMinCharacters, sentenceDelimiters,
+            sentenceIncludeDelimiter, fastDelimiters, fastPrefix,
+            fastConsecutive, fastForwardFallback
         });
 
         // Chunk the document

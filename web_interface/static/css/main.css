@@ -4379,6 +4379,63 @@ body.scrolling .text-item:hover {
     display: block;
 }
 
+.settings-category-continuation.active {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border-primary);
+}
+
+.settings-effect-note {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    font-size: 11px !important;
+}
+
+.settings-autosave-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: auto;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.settings-autosave-label i {
+    color: var(--success-color);
+}
+
+#advanced-rag-settings-host .qs-tabs {
+    margin-top: 10px;
+    border-bottom-color: var(--border-primary);
+}
+
+#advanced-rag-settings-host .qs-tabs .settings-tab {
+    color: var(--text-muted);
+}
+
+#advanced-rag-settings-host .qs-tabs .settings-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-color);
+}
+
+#advanced-rag-settings-host .advanced-rag-settings-body {
+    padding: 16px 0 0;
+}
+
+#advanced-rag-settings-host .setting-row label,
+#advanced-rag-settings-host .qs-compact-item label {
+    color: var(--text-secondary);
+}
+
+#advanced-rag-settings-host .quick-settings-actions {
+    justify-content: flex-start;
+}
+
 .settings-category h3 {
     font-size: 15px;
     font-weight: 600;

@@ -1,8 +1,9 @@
 import { WebSocketServer } from 'ws';
 
 export class BrowserBridge {
-  constructor(port = 3700) {
+  constructor(port = 3700, host = '127.0.0.1') {
     this._port = parseInt(process.env.VECTORIA_BRIDGE_PORT || port, 10);
+    this._host = process.env.VECTORIA_BRIDGE_HOST || host;
     this._wss = null;
     this._client = null;
     this._pending = new Map(); // id → {resolve, reject, timer}
@@ -10,8 +11,11 @@ export class BrowserBridge {
   }
 
   async start() {
-    return new Promise((resolve) => {
-      this._wss = new WebSocketServer({ port: this._port });
+    return new Promise((resolve, reject) => {
+      // Bind the same IPv4 loopback address used by the browser worker. On
+      // macOS, binding without a host can create an IPv6-only listener while
+      // `localhost` resolves to 127.0.0.1, leaving the UI waiting forever.
+      this._wss = new WebSocketServer({ port: this._port, host: this._host });
       this._wss.on('connection', (ws) => {
         console.error(`[MCP Bridge] Browser tab connected`);
         this._client = ws;
@@ -54,12 +58,13 @@ export class BrowserBridge {
       });
 
       this._wss.on('listening', () => {
-        console.error(`[MCP Bridge] Relay listening on ws://localhost:${this._port}`);
+        console.error(`[MCP Bridge] Relay listening on ws://${this._host}:${this._port}`);
         resolve();
       });
 
       this._wss.on('error', (err) => {
         console.error('[MCP Bridge] Server error:', err.message);
+        reject(err);
       });
     });
   }
@@ -78,7 +83,7 @@ export class BrowserBridge {
   call(method, params = {}, timeoutMs = 30000) {
     if (!this.isConnected) {
       return Promise.reject(new Error(
-        'Vectoria browser tab not connected. Open http://localhost:5050 first, then enable MCP Bridge in Advanced Settings.'
+        'Vectoria browser tab not connected. Open Vectoria in your browser, then enable MCP Bridge in Advanced Settings.'
       ));
     }
 

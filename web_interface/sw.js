@@ -9,7 +9,7 @@
 // release. The SW uses it for the cache name (so old caches get evicted in the
 // activate handler) and appends it as a ?v= query string to every precached
 // URL (so a stale Vercel/CDN immutable copy is not served after a deploy).
-const BUILD_ID = '2026-06-30-6c39997';
+const BUILD_ID = '2026-07-14-6707bdd';
 const CACHE_VERSION = `vectoria-${BUILD_ID}`;
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;

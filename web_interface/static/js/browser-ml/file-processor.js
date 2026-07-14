@@ -4,8 +4,8 @@
  * Pure JavaScript parsing without server backend
  */
 
-import Papa from 'https://cdn.jsdelivr.net/npm/papaparse@5.4.1/+esm';
-import * as XLSX from 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm';
+import Papa from 'https://cdn.jsdelivr.net/npm/papaparse@5.5.4/+esm';
+import * as XLSX from 'https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs';
 
 export class BrowserFileProcessor {
     constructor() {

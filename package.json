@@ -14,19 +14,15 @@
     "preview": "npx serve web_interface -p 5050"
   },
   "dependencies": {
-    "@chonkiejs/core": "^0.0.5",
+    "@chonkiejs/core": "^0.0.11",
     "@huggingface/transformers": "4.2.0",
-    "@mlc-ai/web-llm": "0.2.83",
-    "hdbscan-ts": "^1.0.3",
-    "hnswlib-node": "^3.0.0",
-    "hnswlib-wasm": "^0.8.2",
+    "@mlc-ai/web-llm": "0.2.84",
     "localforage": "^1.10.0",
-    "papaparse": "^5.4.1",
-    "umap-js": "^1.4.0",
-    "xlsx": "^0.18.5"
+    "papaparse": "^5.5.4",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
-    "serve": "^14.2.1"
+    "serve": "^14.2.6"
   },
   "engines": {
     "node": ">=18.0.0"

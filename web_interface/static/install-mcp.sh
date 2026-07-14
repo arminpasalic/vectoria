@@ -8,6 +8,7 @@ set -euo pipefail
 INSTALL_DIR="$HOME/.vectoria-mcp"
 BASE_URL="https://vectoria.app"
 UNINSTALL=false
+NODE_BIN=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,11 +34,12 @@ patch_add() {
   local cfg_path="$1"
   local format="$2"
   local entry="$3"
+  local node_bin="$4"
 
-  python3 - "$cfg_path" "$format" "$entry" <<'EOF'
+  python3 - "$cfg_path" "$format" "$entry" "$node_bin" <<'EOF'
 import sys, json, os
 
-path, fmt, entry = sys.argv[1], sys.argv[2], sys.argv[3]
+path, fmt, entry, node_bin = sys.argv[1:5]
 cfg = {}
 if os.path.exists(path):
     try:
@@ -48,20 +50,20 @@ if os.path.exists(path):
 
 if fmt == 'mcp_object':
     cfg.setdefault('mcpServers', {})['vectoria'] = {
-        'command': 'node', 'args': [entry]
+        'command': node_bin, 'args': [entry]
     }
 elif fmt == 'opencode':
     cfg.setdefault('mcp', {})['vectoria'] = {
-        'type': 'local', 'command': ['node', entry]
+        'type': 'local', 'command': [node_bin, entry]
     }
 elif fmt == 'zed':
     cfg.setdefault('context_servers', {})['vectoria'] = {
-        'command': {'path': 'node', 'args': [entry]}
+        'command': {'path': node_bin, 'args': [entry]}
     }
 elif fmt == 'continue':
     servers = cfg.setdefault('mcpServers', [])
     servers = [s for s in servers if s.get('name') != 'vectoria']
-    servers.append({'name': 'vectoria', 'command': 'node', 'args': [entry]})
+    servers.append({'name': 'vectoria', 'command': node_bin, 'args': [entry]})
     cfg['mcpServers'] = servers
 
 with open(path, 'w') as f:
@@ -141,6 +143,12 @@ if ! node -e "if(parseInt(process.versions.node)<18)process.exit(1)" 2>/dev/null
   exit 1
 fi
 echo "✅ Node.js $(node -v)"
+NODE_BIN="$(command -v node)"
+# Resolve symlinks when possible. GUI apps on macOS do not inherit shell/nvm
+# PATH setup, so client configs must contain a directly executable Node path.
+if [[ -L "$NODE_BIN" ]]; then
+  NODE_BIN="$(cd "$(dirname "$NODE_BIN")" && pwd -P)/$(basename "$NODE_BIN")"
+fi
 
 if ! command -v python3 &>/dev/null; then
   echo "❌ python3 not found (used to configure your AI clients)."
@@ -202,7 +210,7 @@ for entry in "${CLIENTS[@]}"; do
 
   if [[ -d "$cfg_dir" || -f "$cfg_path" ]]; then
     mkdir -p "$cfg_dir"
-    patch_add "$cfg_path" "$format" "$INSTALL_DIR/index.js"
+    patch_add "$cfg_path" "$format" "$INSTALL_DIR/index.js" "$NODE_BIN"
     CONFIGURED+=("$name")
     echo "   ✅ $name"
   else

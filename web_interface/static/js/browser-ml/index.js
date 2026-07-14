@@ -331,9 +331,18 @@ export class BrowserMLPipeline {
                 // Use configured chunking options
                 updateProgress('embedding', 0.30, 'Chunking documents with ChonkieJS...');
                 const chunkingOptions = {
-                    chunkSize: chunkConfig.chunk_size || 512,
-                    chunkOverlap: chunkConfig.chunk_overlap || 128,
-                    minChunkSize: chunkConfig.min_chunk_size || 50
+                    strategy: chunkConfig.strategy || 'token',
+                    chunkSize: chunkConfig.chunk_size ?? 512,
+                    chunkOverlap: chunkConfig.chunk_overlap ?? 128,
+                    minChunkSize: chunkConfig.min_chunk_size ?? 50,
+                    sentenceMinSentences: chunkConfig.sentence_min_sentences || 1,
+                    sentenceMinCharacters: chunkConfig.sentence_min_characters || 12,
+                    sentenceDelimiters: chunkConfig.sentence_delimiters || ['. ', '! ', '? ', '\n'],
+                    sentenceIncludeDelimiter: chunkConfig.sentence_include_delimiter || 'prev',
+                    fastDelimiters: chunkConfig.fast_delimiters || '\n.?',
+                    fastPrefix: chunkConfig.fast_prefix === true,
+                    fastConsecutive: chunkConfig.fast_consecutive === true,
+                    fastForwardFallback: chunkConfig.fast_forward_fallback !== false
                 };
                 const result = await chunkDocuments(documents, chunkingOptions);
                 chunks = result.chunks;

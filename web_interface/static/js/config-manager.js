@@ -15,7 +15,7 @@
  */
 
 const STORAGE_KEY = 'vectoria_config';
-const STORAGE_VERSION = 4;
+const STORAGE_VERSION = 5;
 
 // Previous default LLM, swapped to the new default in v4 for users who never changed it
 const PREVIOUS_DEFAULT_LLM_ID = 'gemma3-1b-it-q4f16_1-MLC';
@@ -59,9 +59,18 @@ export const DEFAULT_CONFIG = {
     // Text Chunking Settings
     chunking: {
         enabled: true,
+        strategy: 'token',
         chunk_size: 512,
         chunk_overlap: 128,
-        min_chunk_size: 50
+        min_chunk_size: 50,
+        sentence_min_sentences: 1,
+        sentence_min_characters: 12,
+        sentence_delimiters: ['. ', '! ', '? ', '\n'],
+        sentence_include_delimiter: 'prev',
+        fast_delimiters: '\n.?',
+        fast_prefix: false,
+        fast_consecutive: false,
+        fast_forward_fallback: true
     },
 
     // RAG Prompts

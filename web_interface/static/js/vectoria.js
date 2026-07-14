@@ -4461,8 +4461,92 @@ window.initializeEnhancements = initializeEnhancements;
 window.initializeFastSearchIntegration = initializeFastSearchIntegration;
 window.initializeTooltipEnhancements = initializeTooltipEnhancements;
 
+const CHUNKING_STRATEGY_HELP = {
+    token: 'Predictable character-sized chunks with configurable overlap.',
+    recursive: 'Preserves paragraph, sentence, punctuation, and word boundaries where possible.',
+    sentence: 'Builds chunks from complete sentences using configurable boundary delimiters.',
+    fast: 'Uses Chonkie WASM boundary detection. Chunk size is measured in UTF-8 bytes.'
+};
+
+function updateChunkingStrategyUI() {
+    const strategy = document.getElementById('chunking-strategy')?.value || 'token';
+    const sentenceOptions = document.getElementById('chunking-sentence-options');
+    const fastOptions = document.getElementById('chunking-fast-options');
+    const overlapGroup = document.getElementById('chunk-overlap-group');
+    const help = document.getElementById('chunking-strategy-help');
+    const sizeInput = document.getElementById('chunk-size');
+    const sizeHelp = document.getElementById('chunk-size-help');
+
+    if (sentenceOptions) sentenceOptions.style.display = strategy === 'sentence' ? 'block' : 'none';
+    if (fastOptions) fastOptions.style.display = strategy === 'fast' ? 'block' : 'none';
+    if (overlapGroup) overlapGroup.style.display = (strategy === 'token' || strategy === 'sentence') ? '' : 'none';
+    if (help) help.textContent = CHUNKING_STRATEGY_HELP[strategy] || CHUNKING_STRATEGY_HELP.token;
+    if (sizeHelp) sizeHelp.textContent = strategy === 'fast'
+        ? 'UTF-8 bytes per chunk (multibyte characters may use more than one byte)'
+        : 'Characters per chunk (~128 tokens at 512 chars)';
+    if (sizeInput) {
+        sizeInput.max = strategy === 'fast' ? '16384' : '4096';
+        sizeInput.step = strategy === 'fast' ? '256' : '64';
+    }
+}
+
+function setupChunkingStrategyControls() {
+    const strategySelect = document.getElementById('chunking-strategy');
+    if (!strategySelect || strategySelect.dataset.strategyUiInitialized === 'true') return;
+    strategySelect.dataset.strategyUiInitialized = 'true';
+    strategySelect.addEventListener('change', updateChunkingStrategyUI);
+    updateChunkingStrategyUI();
+}
+
+function organizeAdvancedSettings() {
+    const storageHost = document.getElementById('advanced-storage-settings-host');
+    const storageSection = document.getElementById('storage-cache-section');
+    if (storageHost && storageSection && storageSection.parentElement !== storageHost) {
+        storageHost.appendChild(storageSection);
+    }
+
+    const ragHost = document.getElementById('advanced-rag-settings-host');
+    const quickModal = document.getElementById('quick-settings-modal');
+    const ragTabs = quickModal?.querySelector('.qs-tabs');
+    const ragBody = quickModal?.querySelector('.quick-settings-body');
+    if (ragHost && ragTabs && ragTabs.parentElement !== ragHost) ragHost.appendChild(ragTabs);
+    if (ragHost && ragBody && ragBody.parentElement !== ragHost) {
+        ragBody.classList.add('advanced-rag-settings-body');
+        ragHost.appendChild(ragBody);
+    }
+
+    const applyQuick = document.getElementById('apply-quick-settings');
+    if (applyQuick) applyQuick.style.display = 'none';
+
+    if (typeof initializeQuickSettingsModal === 'function') {
+        initializeQuickSettingsModal();
+    }
+}
+
+function selectAdvancedSettingsCategory(category = 'storage') {
+    const modal = document.getElementById('advanced-settings-modal');
+    if (!modal) return;
+
+    modal.querySelectorAll('.settings-nav-btn').forEach(button => {
+        button.classList.toggle('active', button.dataset.category === category);
+    });
+    modal.querySelectorAll('.settings-category').forEach(panel => {
+        panel.classList.toggle('active', panel.dataset.category === category);
+    });
+
+    if (category === 'rag' && typeof window.loadQuickSettingsFromStorage === 'function') {
+        window.loadQuickSettingsFromStorage();
+    }
+}
+
+window.openAdvancedSettingsCategory = function(category = 'storage') {
+    openAdvancedSettingsModal(category);
+};
+
 // Settings UI initialization function
 function initializeSettingsUI() {
+    organizeAdvancedSettings();
+
     // Initialize settings navigation
     const settingsNavBtns = document.querySelectorAll('.settings-nav-btn');
     const settingsCategories = document.querySelectorAll('.settings-category');
@@ -4477,12 +4561,12 @@ function initializeSettingsUI() {
             
             // Update active settings category
             settingsCategories.forEach(cat => cat.classList.remove('active'));
-            const targetCategory = document.querySelector(`.settings-category[data-category="${category}"]`);
-            if (targetCategory) {
-                targetCategory.classList.add('active');
-            }
+            document.querySelectorAll(`.settings-category[data-category="${category}"]`)
+                .forEach(targetCategory => targetCategory.classList.add('active'));
         });
     });
+
+    setupChunkingStrategyControls();
     
     // Initialize range value displays
     const ranges = document.querySelectorAll('input[type="range"]');
@@ -4864,6 +4948,20 @@ function collectConfigurationData() {
         return el ? el.checked : defaultValue;
     };
 
+    const decodeEscapes = (value) => String(value || '')
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\r/g, '\r');
+
+    const getSentenceDelimiters = () => {
+        const value = getValueSafe('sentence-delimiters');
+        if (!value) return defaults.chunking?.sentence_delimiters || ['. ', '! ', '? ', '\n'];
+        const delimiters = value.split('\n')
+            .filter(line => line.length > 0)
+            .map(decodeEscapes);
+        return delimiters.length ? delimiters : ['. ', '! ', '? ', '\n'];
+    };
+
     // Read saved config to preserve values for fields not present in the Advanced Settings modal DOM
     const savedConfig = window.ConfigManager ? window.ConfigManager.getConfig() : {};
     const defaults = window.ConfigManager ? window.ConfigManager.DEFAULT_CONFIG : {};
@@ -4899,9 +4997,18 @@ function collectConfigurationData() {
         },
         chunking: {
             enabled: getCheckedSafe('chunking-enabled', true),
+            strategy: getValueSafe('chunking-strategy', defaults.chunking?.strategy || 'token'),
             chunk_size: parseInt(getValueSafe('chunk-size', String(defaults.chunking?.chunk_size)), 10),
             chunk_overlap: parseInt(getValueSafe('chunk-overlap', String(defaults.chunking?.chunk_overlap)), 10),
-            min_chunk_size: parseInt(getValueSafe('min-chunk-size', String(defaults.chunking?.min_chunk_size)), 10)
+            min_chunk_size: parseInt(getValueSafe('min-chunk-size', String(defaults.chunking?.min_chunk_size)), 10),
+            sentence_min_sentences: parseInt(getValueSafe('sentence-min-sentences', String(defaults.chunking?.sentence_min_sentences || 1)), 10),
+            sentence_min_characters: parseInt(getValueSafe('sentence-min-characters', String(defaults.chunking?.sentence_min_characters || 12)), 10),
+            sentence_delimiters: getSentenceDelimiters(),
+            sentence_include_delimiter: getValueSafe('sentence-include-delimiter', defaults.chunking?.sentence_include_delimiter || 'prev'),
+            fast_delimiters: decodeEscapes(getValueSafe('fast-delimiters', defaults.chunking?.fast_delimiters || '\\n.?')),
+            fast_prefix: getCheckedSafe('fast-prefix', defaults.chunking?.fast_prefix || false),
+            fast_consecutive: getCheckedSafe('fast-consecutive', defaults.chunking?.fast_consecutive || false),
+            fast_forward_fallback: getCheckedSafe('fast-forward-fallback', defaults.chunking?.fast_forward_fallback !== false)
         },
         rag_prompts: {
             system_prompt: getFromDomOrConfig('system-prompt', 'rag_prompts.system_prompt', defaults.rag_prompts?.system_prompt),
@@ -4983,9 +5090,24 @@ function populateConfigurationForm(config) {
         const chunk = config.chunking;
         const chunkingEnabled = document.getElementById('chunking-enabled');
         if (chunkingEnabled) chunkingEnabled.checked = chunk.enabled !== false;
+        setElementValue('chunking-strategy', chunk.strategy || 'token');
         setElementValue('chunk-size', chunk.chunk_size);
         setElementValue('chunk-overlap', chunk.chunk_overlap);
         setElementValue('min-chunk-size', chunk.min_chunk_size);
+        setElementValue('sentence-min-sentences', chunk.sentence_min_sentences ?? 1);
+        setElementValue('sentence-min-characters', chunk.sentence_min_characters ?? 12);
+        setElementValue('sentence-include-delimiter', chunk.sentence_include_delimiter || 'prev');
+        setElementValue('sentence-delimiters', (chunk.sentence_delimiters || ['. ', '! ', '? ', '\n'])
+            .map(delimiter => delimiter === '\n' ? '\\n' : delimiter)
+            .join('\n'));
+        setElementValue('fast-delimiters', String(chunk.fast_delimiters || '\n.?').replace(/\n/g, '\\n'));
+        const fastPrefix = document.getElementById('fast-prefix');
+        const fastConsecutive = document.getElementById('fast-consecutive');
+        const fastForwardFallback = document.getElementById('fast-forward-fallback');
+        if (fastPrefix) fastPrefix.checked = chunk.fast_prefix === true;
+        if (fastConsecutive) fastConsecutive.checked = chunk.fast_consecutive === true;
+        if (fastForwardFallback) fastForwardFallback.checked = chunk.fast_forward_fallback !== false;
+        updateChunkingStrategyUI();
     }
 
     // Populate prompts
@@ -5148,7 +5270,7 @@ function initializeModalHandlers() {
 
 }
 
-function openAdvancedSettingsModal() {
+function openAdvancedSettingsModal(category = 'storage') {
     const modal = document.getElementById('advanced-settings-modal');
     if (modal) {
         // Load current configuration when opening modal
@@ -5156,6 +5278,8 @@ function openAdvancedSettingsModal() {
             const config = window.ConfigManager.getConfig();
             populateConfigurationForm(config);
         }
+
+        selectAdvancedSettingsCategory(category);
         
         // Ensure auto-save is set up (in case it wasn't ready on page load)
         if (!modal.hasAttribute('data-autosave-initialized')) {
@@ -8292,9 +8416,32 @@ function initializeExportImportHandlers() {
                 spinner.style.display = 'inline';
                 loadSampleBtn.disabled = true;
 
-                const response = await fetch('static/samples/sampledata.json');
-                if (!response.ok) {
-                    throw new Error('Sample dataset not found. See static/samples/README.md to generate it.');
+                // Fetch with retry: a concurrent model (WebLLM WASM) download
+                // can saturate the storage/network layer and make Chrome
+                // spuriously fail this unrelated fetch with ERR_FAILED even on a
+                // 200. cache:'no-store' avoids any cache-layer interference, and
+                // a couple of retries ride out the transient failure.
+                let response = null;
+                let lastErr = null;
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        response = await fetch('static/samples/sampledata.json', { cache: 'no-store' });
+                        if (response.ok) break;
+                        lastErr = new Error(`HTTP ${response.status}`);
+                        response = null;
+                    } catch (err) {
+                        lastErr = err;
+                        response = null;
+                    }
+                    if (attempt < 3) {
+                        await new Promise(r => setTimeout(r, 400 * attempt));
+                    }
+                }
+                if (!response) {
+                    throw new Error(
+                        'Could not load the sample dataset. If a model is still downloading, wait a moment and try again. ' +
+                        (lastErr ? `(${lastErr.message})` : '')
+                    );
                 }
 
                 const blob = await response.blob();

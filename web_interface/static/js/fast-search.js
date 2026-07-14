@@ -848,6 +848,10 @@ class SearchInterface {
             const ragSettingsBtn = document.getElementById('rag-settings-btn');
             if (ragSettingsBtn) {
                 ragSettingsBtn.addEventListener('click', () => {
+                    if (typeof window.openAdvancedSettingsCategory === 'function') {
+                        window.openAdvancedSettingsCategory('rag');
+                        return;
+                    }
                     const modal = document.getElementById('quick-settings-modal');
                     if (modal) {
                         modal.style.display = 'flex';

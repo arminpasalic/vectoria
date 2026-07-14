@@ -262,10 +262,18 @@ cd mcp-server
 npm install
 ```
 
-**2. Run the install script (auto-configures all detected clients)**
+**2. Run the installer (auto-configures all detected clients)**
+
+macOS / Linux:
 
 ```bash
 curl -fsSL https://vectoria.app/static/install-mcp.sh | bash
+```
+
+Windows PowerShell:
+
+```powershell
+$script = Invoke-RestMethod 'https://vectoria.app/static/install-mcp.ps1'; & ([scriptblock]::Create($script))
 ```
 
 The script detects which AI clients are installed on your machine and configures all of them automatically. Example output:
@@ -281,16 +289,16 @@ The script detects which AI clients are installed on your machine and configures
 2. Go to **Advanced Settings → MCP Bridge** → enable the toggle
 3. Status shows **● Connected · Claude Desktop** (or whichever client connected)
 
-> The MCP bridge runs locally on your machine (`ws://localhost:3700`). Your browser tab connects to it directly — no data leaves your computer, regardless of where Vectoria itself is hosted.
+> The MCP bridge runs locally on your machine (`ws://127.0.0.1:3700`). Your browser tab connects to it directly — no data leaves your computer, regardless of where Vectoria itself is hosted.
 
 ### Supported Clients
 
 | Client | Auto-configured | Config path |
 |---|---|---|
-| Claude Desktop | ✅ | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Claude Desktop | ✅ | macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows: `%APPDATA%\Claude\claude_desktop_config.json` |
 | Cursor | ✅ | `~/.cursor/mcp.json` |
 | OpenCode | ✅ | `~/.config/opencode/config.json` |
-| Zed | ✅ | `~/.config/zed/settings.json` |
+| Zed | ✅ | macOS/Linux: `~/.config/zed/settings.json`; Windows: `%APPDATA%\Zed\settings.json` |
 | Continue.dev | ✅ | `~/.continue/config.json` |
 
 **Manual config (if needed)**
@@ -300,7 +308,7 @@ Claude Desktop / Cursor (`mcpServers` object):
 {
   "mcpServers": {
     "vectoria": {
-      "command": "node",
+      "command": "/absolute/path/to/node",
       "args": ["/Users/you/.vectoria-mcp/index.js"]
     }
   }
@@ -313,7 +321,7 @@ OpenCode (`~/.config/opencode/config.json`):
   "mcp": {
     "vectoria": {
       "type": "local",
-      "command": ["node", "/Users/you/.vectoria-mcp/index.js"]
+      "command": ["/absolute/path/to/node", "/Users/you/.vectoria-mcp/index.js"]
     }
   }
 }
@@ -325,7 +333,7 @@ Zed (`~/.config/zed/settings.json`):
   "context_servers": {
     "vectoria": {
       "command": {
-        "path": "node",
+        "path": "/absolute/path/to/node",
         "args": ["/Users/you/.vectoria-mcp/index.js"]
       }
     }
@@ -339,7 +347,7 @@ Continue.dev (`~/.continue/config.json`):
   "mcpServers": [
     {
       "name": "vectoria",
-      "command": "node",
+      "command": "/absolute/path/to/node",
       "args": ["/Users/you/.vectoria-mcp/index.js"]
     }
   ]
@@ -360,7 +368,7 @@ Continue.dev (`~/.continue/config.json`):
 ### Architecture
 
 ```
-AI Client (stdio) → ~/.vectoria-mcp/index.js → BrowserBridge (ws://localhost:3700)
+AI Client (stdio) → ~/.vectoria-mcp/index.js → BrowserBridge (ws://127.0.0.1:3700)
                                                        ↕
                                            SharedWorker in browser tab
                                                        ↕
@@ -369,11 +377,19 @@ AI Client (stdio) → ~/.vectoria-mcp/index.js → BrowserBridge (ws://localhost
 
 ### Uninstall
 
+macOS / Linux:
+
 ```bash
 curl -fsSL https://vectoria.app/static/install-mcp.sh | bash -s -- --uninstall
 ```
 
-Removes `~/.vectoria-mcp/` and cleans the Vectoria entry from all detected client configs.
+Windows PowerShell:
+
+```powershell
+$script = Invoke-RestMethod 'https://vectoria.app/static/install-mcp.ps1'; & ([scriptblock]::Create($script)) -Uninstall
+```
+
+Removes `~/.vectoria-mcp/` (or `%USERPROFILE%\.vectoria-mcp` on Windows) and cleans the Vectoria entry from all detected client configs.
 
 ---
 

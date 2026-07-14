@@ -1,1 +1,0 @@
-export { UMAP } from './umap';

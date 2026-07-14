@@ -38,12 +38,10 @@
     <link rel="preconnect" href="https://esm.run" crossorigin>
     <link rel="dns-prefetch" href="https://huggingface.co">
 
-    <link rel="stylesheet" href="static/css/main.css?v=2026-06-30-6c39997">
+    <link rel="stylesheet" href="static/css/main.css?v=2026-07-14-6707bdd">
     <link rel="stylesheet" href="static/css/browser-ml.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.14.0/plotly.min.js" crossorigin="anonymous" defer></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js" crossorigin="anonymous" defer></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.5.4/papaparse.min.js" crossorigin="anonymous" defer></script>
 
     <link rel="icon" type="image/svg+xml" href="static/img/favicon.svg">
     <link rel="apple-touch-icon" href="static/img/favicon.svg">
@@ -475,80 +473,35 @@
             <div class="modal-body">
                 <div class="settings-categories">
                     <div class="settings-nav">
-                        <button class="settings-nav-btn active" data-category="llm">
-                            <span class="settings-nav-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" role="presentation">
-                                    <rect x="3.5" y="5" width="8" height="14" rx="1.4"></rect>
-                                    <rect x="12.5" y="5" width="8" height="14" rx="1.4"></rect>
-                                    <line x1="7" y1="8" x2="9.5" y2="8"></line>
-                                    <line x1="16" y1="8" x2="18.5" y2="8"></line>
-                                </svg>
-                            </span>
-                            <span class="settings-nav-label">Language Model</span>
+                        <button class="settings-nav-btn active" data-category="storage">
+                            <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-database"></i></span>
+                            <span class="settings-nav-label">Storage &amp; App</span>
                         </button>
-                        <button class="settings-nav-btn" data-category="embeddings">
-                            <span class="settings-nav-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" role="presentation">
-                                    <circle cx="6" cy="12" r="2.2"></circle>
-                                    <circle cx="12" cy="6" r="2.2"></circle>
-                                    <circle cx="18" cy="12" r="2.2"></circle>
-                                    <circle cx="12" cy="18" r="2.2"></circle>
-                                    <line x1="7.8" y1="10.3" x2="10.3" y2="7.8"></line>
-                                    <line x1="13.7" y1="7.8" x2="16.2" y2="10.3"></line>
-                                    <line x1="7.8" y1="13.7" x2="10.3" y2="16.2"></line>
-                                    <line x1="13.7" y1="16.2" x2="16.2" y2="13.7"></line>
-                                </svg>
-                            </span>
-                            <span class="settings-nav-label">Embeddings</span>
+                        <button class="settings-nav-btn" data-category="models">
+                            <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-microchip"></i></span>
+                            <span class="settings-nav-label">AI Models</span>
                         </button>
-                        <button class="settings-nav-btn" data-category="clustering">
-                            <span class="settings-nav-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" role="presentation">
-                                    <circle cx="9" cy="9" r="3.4"></circle>
-                                    <circle cx="15" cy="9" r="3.4"></circle>
-                                    <circle cx="12" cy="15" r="3.4"></circle>
-                                </svg>
-                            </span>
-                            <span class="settings-nav-label">Clustering</span>
+                        <button class="settings-nav-btn" data-category="processing">
+                            <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-layer-group"></i></span>
+                            <span class="settings-nav-label">Data Processing</span>
                         </button>
-                        <button class="settings-nav-btn" data-category="chunking">
-                            <span class="settings-nav-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" role="presentation">
-                                    <rect x="4" y="4" width="6" height="6" rx="1"></rect>
-                                    <rect x="14" y="4" width="6" height="6" rx="1"></rect>
-                                    <rect x="4" y="14" width="6" height="6" rx="1"></rect>
-                                    <rect x="14" y="14" width="6" height="6" rx="1"></rect>
-                                </svg>
-                            </span>
-                            <span class="settings-nav-label">Chunking</span>
+                        <button class="settings-nav-btn" data-category="rag">
+                            <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-search"></i></span>
+                            <span class="settings-nav-label">Search &amp; RAG</span>
+                        </button>
+                        <button class="settings-nav-btn" data-category="explore">
+                            <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-project-diagram"></i></span>
+                            <span class="settings-nav-label">Explore &amp; Clustering</span>
                         </button>
                         <button class="settings-nav-btn" data-category="mcp">
-                            <span class="settings-nav-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" role="presentation">
-                                    <circle cx="5" cy="12" r="2.2"></circle>
-                                    <circle cx="19" cy="12" r="2.2"></circle>
-                                    <circle cx="12" cy="5" r="2.2"></circle>
-                                    <circle cx="12" cy="19" r="2.2"></circle>
-                                    <line x1="7.2" y1="12" x2="16.8" y2="12"></line>
-                                    <line x1="12" y1="7.2" x2="12" y2="16.8"></line>
-                                </svg>
-                            </span>
-                            <span class="settings-nav-label">MCP Bridge</span>
-                        </button>
-                        <button class="settings-nav-btn" data-category="about">
-                            <span class="settings-nav-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" role="presentation">
-                                    <circle cx="12" cy="12" r="9"></circle>
-                                    <line x1="12" y1="16" x2="12" y2="12"></line>
-                                    <circle cx="12" cy="8.5" r="0.8" fill="currentColor"></circle>
-                                </svg>
-                            </span>
-                            <span class="settings-nav-label">About & Credits</span>
+                            <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-plug"></i></span>
+                            <span class="settings-nav-label">MCP &amp; Integrations</span>
                         </button>
                     </div>
                     
-                    <div class="settings-category active" data-category="llm">
-                        <h3>Language Model</h3>
+                    <div class="settings-category" data-category="models">
+                        <h3>AI Models</h3>
+                        <p class="settings-effect-note"><i class="fas fa-redo"></i> Model and context changes require a reload.</p>
 
                         <div class="form-group">
                             <label for="llm-model-id">Model: <span title="Page reload required">⚠️</span></label>
@@ -610,6 +563,7 @@
                             </select>
                         </div>
 
+                        <div id="legacy-generation-controls" style="display:none;">
                         <h4>Generation</h4>
                         <div class="form-row">
                             <div class="form-group">
@@ -635,7 +589,9 @@
                                 <span class="range-value">1.15</span>
                             </div>
                         </div>
+                        </div>
 
+                        <div id="storage-cache-section">
                         <h4>Storage & Cache</h4>
                         <div class="form-group">
                             <div id="storage-info" class="storage-panel" style="display: none;">
@@ -660,10 +616,12 @@
                             </div>
                             <small class="form-help" style="margin-top: 0.5rem; display: block;">Clears all stored data, models, and settings. The page will reload fresh.</small>
                         </div>
+                        </div>
                     </div>
                     
-                    <div class="settings-category" data-category="embeddings">
-                        <h3>Embeddings</h3>
+                    <div class="settings-category" data-category="processing">
+                        <h3>Embedding Processing</h3>
+                        <p class="settings-effect-note"><i class="fas fa-sync-alt"></i> Applies when a dataset is next processed.</p>
                         <div class="info-box" style="padding: 0.5rem; border-radius: 4px; margin-bottom: 0.75rem;">
                             <small><strong>multilingual-e5-small</strong> · 384D · 100+ languages</small>
                         </div>
@@ -685,8 +643,8 @@
                         </div>
                     </div>
 
-                    <div class="settings-category" data-category="chunking">
-                        <h3>Chunking</h3>
+                    <div class="settings-category settings-category-continuation" data-category="processing">
+                        <h3>Document Chunking</h3>
 
                         <div class="form-group">
                             <label>
@@ -696,27 +654,86 @@
                             <small class="form-help">Splits documents into smaller pieces for precise RAG retrieval. Disable to keep documents whole (dynamic chunking at query time).</small>
                         </div>
 
+                        <div class="form-group">
+                            <label for="chunking-strategy">Chunking Strategy:</label>
+                            <select id="chunking-strategy" class="form-control">
+                                <option value="token" selected>Token · fixed size with overlap</option>
+                                <option value="recursive">Recursive · preserve paragraphs and sentences</option>
+                                <option value="sentence">Sentence-aware · configurable boundaries</option>
+                                <option value="fast">Fast/WASM · byte boundary detection</option>
+                            </select>
+                            <small id="chunking-strategy-help" class="form-help">Predictable character-sized chunks with configurable overlap.</small>
+                        </div>
+
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="chunk-size">Chunk Size:</label>
                                 <input type="number" id="chunk-size" value="512" min="256" max="1024" step="64">
-                                <small class="form-help">Characters per chunk (~128 tokens at 512 chars)</small>
+                                <small id="chunk-size-help" class="form-help">Characters per chunk (~128 tokens at 512 chars)</small>
                             </div>
-                            <div class="form-group">
+                            <div class="form-group" id="chunk-overlap-group">
                                 <label for="chunk-overlap">Overlap:</label>
                                 <input type="number" id="chunk-overlap" value="128" min="0" max="256" step="32">
+                                <small class="form-help">Used by Token and Sentence-aware strategies.</small>
                             </div>
                             <div class="form-group">
                                 <label for="min-chunk-size">Min Size:</label>
                                 <input type="number" id="min-chunk-size" value="50" min="20" max="200" step="10">
                             </div>
                         </div>
+
+                        <div id="chunking-sentence-options" class="chunking-strategy-options" style="display:none;">
+                            <h4>Sentence boundaries</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="sentence-min-sentences">Min Sentences:</label>
+                                    <input type="number" id="sentence-min-sentences" value="1" min="1" max="20" step="1">
+                                </div>
+                                <div class="form-group">
+                                    <label for="sentence-min-characters">Min Sentence Chars:</label>
+                                    <input type="number" id="sentence-min-characters" value="12" min="1" max="500" step="1">
+                                </div>
+                                <div class="form-group">
+                                    <label for="sentence-include-delimiter">Delimiter Placement:</label>
+                                    <select id="sentence-include-delimiter" class="form-control">
+                                        <option value="prev" selected>Previous sentence</option>
+                                        <option value="next">Next sentence</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="sentence-delimiters">Delimiters (one per line):</label>
+                                <textarea id="sentence-delimiters" rows="4" class="form-control" placeholder=".&#10;!&#10;?&#10;\n"></textarea>
+                                <small class="form-help">Use <code>\n</code> for a line break. Trailing spaces are preserved.</small>
+                            </div>
+                        </div>
+
+                        <div id="chunking-fast-options" class="chunking-strategy-options" style="display:none;">
+                            <h4>Fast/WASM boundaries</h4>
+                            <div class="form-group">
+                                <label for="fast-delimiters">Boundary Characters:</label>
+                                <input type="text" id="fast-delimiters" value="\n.?" class="form-control">
+                                <small class="form-help">Use <code>\n</code> for line breaks. Chunk size is measured in UTF-8 bytes.</small>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label><input type="checkbox" id="fast-prefix"> Put boundary at start of next chunk</label>
+                                </div>
+                                <div class="form-group">
+                                    <label><input type="checkbox" id="fast-consecutive"> Split consecutive boundary runs</label>
+                                </div>
+                                <div class="form-group">
+                                    <label><input type="checkbox" id="fast-forward-fallback" checked> Search forward for a boundary</label>
+                                </div>
+                            </div>
+                        </div>
                         <small class="form-help" style="display:block; margin-top: 0.5rem; color: #888;">Tip: Match chunk size to embedding max tokens. 512 chars ≈ 128 tokens fits within 256 max_length.</small>
-                        <small class="form-help" style="display:block; margin-top: 0.75rem; color: var(--text-muted); font-style: italic;">Uses recursive character text splitting for intelligent document chunking.</small>
+                        <small class="form-help" style="display:block; margin-top: 0.75rem; color: var(--text-muted); font-style: italic;">Character tokenization remains local and dependency-free. Settings apply when a dataset is next processed.</small>
                     </div>
 
-                    <div class="settings-category" data-category="clustering">
-                        <h3>Clustering</h3>
+                    <div class="settings-category" data-category="explore">
+                        <h3>Explore &amp; Clustering</h3>
+                        <p class="settings-effect-note"><i class="fas fa-sync-alt"></i> Applies when a dataset is next processed.</p>
 
                         <h4>UMAP</h4>
                         <div class="form-row">
@@ -767,9 +784,15 @@
                             </select>
                         </div>
                     </div>
+
+                    <div class="settings-category" data-category="rag">
+                        <h3>Search &amp; RAG</h3>
+                        <p class="settings-effect-note"><i class="fas fa-bolt"></i> Retrieval and generation changes apply to the next query.</p>
+                        <div id="advanced-rag-settings-host"></div>
+                    </div>
                     
                     <div class="settings-category" data-category="mcp">
-                        <h3>MCP Bridge</h3>
+                        <h3>MCP &amp; Integrations</h3>
                         <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.25rem;">
                             Expose Vectoria's search, RAG, clusters, and visualization as tools to Claude Desktop, OpenCode, Cursor, Zed, Continue.dev, and any other MCP-compatible AI assistant.
                         </p>
@@ -777,7 +800,7 @@
                         <!-- STATUS PILL -->
                         <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;">
                             <span id="mcp-bridge-status" style="font-size: 0.78rem; font-weight: 600; padding: 3px 12px; border-radius: 12px; background: var(--bg-tertiary); color: var(--text-secondary);">Not installed</span>
-                            <span id="mcp-relay-info" style="font-size: 0.78rem; color: var(--text-muted); display: none;">ws://localhost:3700</span>
+                            <span id="mcp-relay-info" style="font-size: 0.78rem; color: var(--text-muted); display: none;">ws://127.0.0.1:3700</span>
                         </div>
 
                         <!-- LLM UNLOAD TOGGLE (shown whenever MCP is enabled) -->
@@ -795,7 +818,7 @@
                         <div id="mcp-step-install">
                             <div style="background: var(--bg-secondary); border-radius: 10px; padding: 1.25rem; margin-bottom: 1rem;">
                                 <h4 style="font-size: 0.9rem; margin: 0 0 0.5rem 0;">Quick Install</h4>
-                                <p style="font-size: 0.82rem; color: var(--text-secondary); margin: 0 0 0.75rem 0;">Run this command in your terminal. It installs the MCP server locally and auto-configures all detected AI clients.</p>
+                                <p id="mcp-install-help" style="font-size: 0.82rem; color: var(--text-secondary); margin: 0 0 0.75rem 0;">Run this command in your terminal. It installs the MCP server locally and auto-configures all detected AI clients.</p>
                                 <div style="position: relative;">
                                     <pre id="mcp-install-cmd" style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 7px; padding: 0.65rem 2.5rem 0.65rem 0.85rem; font-size: 0.78rem; margin: 0; white-space: pre-wrap; word-break: break-all; color: var(--text-primary);"></pre>
                                     <button id="mcp-copy-install" title="Copy" style="position: absolute; top: 6px; right: 6px; background: none; border: none; cursor: pointer; color: var(--text-secondary); padding: 2px 5px; border-radius: 4px;" onclick="navigator.clipboard.writeText(document.getElementById('mcp-install-cmd').textContent).then(()=>{ this.textContent='✓'; setTimeout(()=>this.textContent='⧉',1500); })">⧉</button>
@@ -861,8 +884,9 @@
                         </div>
                     </div>
 
-                    <div class="settings-category" data-category="about">
-                        <h3>About Vectoria</h3>
+                    <div class="settings-category active" data-category="storage">
+                        <h3>Storage &amp; App</h3>
+                        <div id="advanced-storage-settings-host"></div>
 
                         <div class="form-group" style="margin-bottom: 1.25rem;">
                             <label style="display: flex; align-items: center; justify-content: space-between;">
@@ -892,7 +916,7 @@
                                 <small><strong>WebGPU</strong> - GPU acceleration</small>
                             </div>
                             <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
-                                <small><strong>UMAP-js</strong> - Dimensionality reduction</small>
+                                <small><strong>UMAP WASM</strong> - Dimensionality reduction</small>
                             </div>
                             <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
                                 <small><strong>HDBSCAN</strong> - Clustering</small>
@@ -927,7 +951,8 @@
                     </div>
 
                     <div class="settings-actions">
-                        <button id="save-settings-btn" class="btn btn-primary">Save</button>
+                        <span class="settings-autosave-label"><i class="fas fa-check-circle"></i> Settings save automatically</span>
+                        <button id="save-settings-btn" class="btn btn-primary" style="display:none;">Save</button>
                         <button id="reset-settings-btn" class="btn btn-secondary">Reset all settings to default</button>
                     </div>
                 </div>
@@ -1455,15 +1480,15 @@
         
     </script>
 
-    <script type="module" src="static/js/config-manager.js?v=2026-06-30-6c39997"></script>
-    <script type="module" src="static/js/model-constraints.js?v=2026-06-30-6c39997"></script>
+    <script type="module" src="static/js/config-manager.js?v=2026-07-14-6707bdd"></script>
+    <script type="module" src="static/js/model-constraints.js?v=2026-07-14-6707bdd"></script>
     <script src="static/js/viz.js"></script>
     <script src="static/js/webgl-renderer.js"></script>
-    <script src="static/js/hyde-handler.js?v=2026-06-30-6c39997"></script>
-    <script src="static/js/fast-search.js?v=2026-06-30-6c39997"></script>
+    <script src="static/js/hyde-handler.js?v=2026-07-14-6707bdd"></script>
+    <script src="static/js/fast-search.js?v=2026-07-14-6707bdd"></script>
     <script src="static/js/search-enhancement.js"></script>
 
-    <script src="static/js/browser-capabilities.js?v=2026-06-30-6c39997"></script>
+    <script src="static/js/browser-capabilities.js?v=2026-07-14-6707bdd"></script>
 
     <script type="module">
         await import('./static/js/browser-integration.js');
@@ -1671,9 +1696,9 @@
         });
     </script>
 
-    <script src="static/js/export-import.js?v=2026-06-30-6c39997"></script>
+    <script src="static/js/export-import.js?v=2026-07-14-6707bdd"></script>
 
-    <script src="static/js/vectoria.js?v=2026-06-30-6c39997"></script>
+    <script src="static/js/vectoria.js?v=2026-07-14-6707bdd"></script>
 
     <script>
     // Apply LLM unload flag immediately on page load, before pipeline initializes
@@ -1964,7 +1989,7 @@
 
             const map = {
                 connected:    { text: '● Connected',    bg: '#166534', color: '#86efac' },
-                disconnected: { text: '○ Waiting for relay…', bg: '#78350f', color: '#fcd34d' },
+                disconnected: { text: '○ Waiting for local MCP client…', bg: '#78350f', color: '#fcd34d' },
                 unavailable:  { text: 'Local MCP relay not running', bg: 'var(--bg-tertiary)', color: 'var(--text-secondary)' },
                 disabled:     { text: 'Not installed / disabled', bg: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }
             };
@@ -1990,12 +2015,20 @@
             const origin = window.location.origin;
             const installCmd = document.getElementById('mcp-install-cmd');
             const uninstallCmd = document.getElementById('mcp-uninstall-cmd');
+            const installHelp = document.getElementById('mcp-install-help');
             const resetNoticeCode = document.querySelector('#reset-mcp-notice code');
-            const install   = `curl -fsSL ${origin}/static/install-mcp.sh | bash -s -- --base-url ${origin}`;
-            const uninstall = `curl -fsSL ${origin}/static/install-mcp.sh | bash -s -- --uninstall --base-url ${origin}`;
+            const platform = navigator.userAgentData?.platform || navigator.platform || '';
+            const isWindows = /win/i.test(platform);
+            const install = isWindows
+                ? `$script = Invoke-RestMethod '${origin}/static/install-mcp.ps1'; & ([scriptblock]::Create($script)) -BaseUrl '${origin}'`
+                : `curl -fsSL ${origin}/static/install-mcp.sh | bash -s -- --base-url ${origin}`;
+            const uninstall = isWindows
+                ? `$script = Invoke-RestMethod '${origin}/static/install-mcp.ps1'; & ([scriptblock]::Create($script)) -BaseUrl '${origin}' -Uninstall`
+                : `curl -fsSL ${origin}/static/install-mcp.sh | bash -s -- --uninstall --base-url ${origin}`;
             if (installCmd) installCmd.textContent = install;
             if (uninstallCmd) uninstallCmd.textContent = uninstall;
             if (resetNoticeCode) resetNoticeCode.textContent = uninstall;
+            if (installHelp && isWindows) installHelp.textContent = 'Run this command in PowerShell. It installs the MCP server locally and auto-configures all detected AI clients.';
 
             const toggle = document.getElementById('mcp-bridge-enabled');
             const toggleConnected = document.getElementById('mcp-bridge-enabled-connected');
