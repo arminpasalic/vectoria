@@ -35,11 +35,13 @@ patch_add() {
   local format="$2"
   local entry="$3"
   local node_bin="$4"
+  local allowed_origin="$5"
 
-  python3 - "$cfg_path" "$format" "$entry" "$node_bin" <<'EOF'
+  python3 - "$cfg_path" "$format" "$entry" "$node_bin" "$allowed_origin" <<'EOF'
 import sys, json, os
 
-path, fmt, entry, node_bin = sys.argv[1:5]
+path, fmt, entry, node_bin, allowed_origin = sys.argv[1:6]
+args = [entry, '--allowed-origin', allowed_origin]
 cfg = {}
 if os.path.exists(path):
     try:
@@ -50,20 +52,20 @@ if os.path.exists(path):
 
 if fmt == 'mcp_object':
     cfg.setdefault('mcpServers', {})['vectoria'] = {
-        'command': node_bin, 'args': [entry]
+        'command': node_bin, 'args': args
     }
 elif fmt == 'opencode':
     cfg.setdefault('mcp', {})['vectoria'] = {
-        'type': 'local', 'command': [node_bin, entry]
+        'type': 'local', 'command': [node_bin, *args]
     }
 elif fmt == 'zed':
     cfg.setdefault('context_servers', {})['vectoria'] = {
-        'command': {'path': node_bin, 'args': [entry]}
+        'command': {'path': node_bin, 'args': args}
     }
 elif fmt == 'continue':
     servers = cfg.setdefault('mcpServers', [])
     servers = [s for s in servers if s.get('name') != 'vectoria']
-    servers.append({'name': 'vectoria', 'command': node_bin, 'args': [entry]})
+    servers.append({'name': 'vectoria', 'command': node_bin, 'args': args})
     cfg['mcpServers'] = servers
 
 with open(path, 'w') as f:
@@ -210,7 +212,7 @@ for entry in "${CLIENTS[@]}"; do
 
   if [[ -d "$cfg_dir" || -f "$cfg_path" ]]; then
     mkdir -p "$cfg_dir"
-    patch_add "$cfg_path" "$format" "$INSTALL_DIR/index.js" "$NODE_BIN"
+    patch_add "$cfg_path" "$format" "$INSTALL_DIR/index.js" "$NODE_BIN" "$BASE_URL"
     CONFIGURED+=("$name")
     echo "   ✅ $name"
   else
@@ -233,7 +235,8 @@ echo "   Next steps:"
 echo "   1. Restart your AI client(s): $(IFS=', '; echo "${CONFIGURED[*]}")"
 echo "   2. Open Vectoria in your browser"
 echo "   3. Advanced Settings → MCP Bridge → enable the toggle"
-echo "   4. Status turns 🟢 Connected · <client name>"
+echo "   4. Allow Local Network Access if your browser prompts"
+echo "   5. Status turns 🟢 Connected · <client name>"
 echo ""
 echo "   To uninstall:"
 echo "   curl -fsSL $BASE_URL/static/install-mcp.sh | bash -s -- --uninstall --base-url $BASE_URL"

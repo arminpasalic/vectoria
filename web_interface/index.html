@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://esm.run" crossorigin>
     <link rel="dns-prefetch" href="https://huggingface.co">
 
-    <link rel="stylesheet" href="static/css/main.css?v=2026-07-14-6707bdd">
+    <link rel="stylesheet" href="static/css/main.css?v=2026-07-15-97471b1">
     <link rel="stylesheet" href="static/css/browser-ml.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.5.4/papaparse.min.js" crossorigin="anonymous" defer></script>
@@ -802,6 +802,7 @@
                             <span id="mcp-bridge-status" style="font-size: 0.78rem; font-weight: 600; padding: 3px 12px; border-radius: 12px; background: var(--bg-tertiary); color: var(--text-secondary);">Not installed</span>
                             <span id="mcp-relay-info" style="font-size: 0.78rem; color: var(--text-muted); display: none;">ws://127.0.0.1:3700</span>
                         </div>
+                        <p id="mcp-relay-status-help" style="display: none; color: var(--text-muted); font-size: 0.78rem; line-height: 1.5; margin: -0.75rem 0 1.25rem;"></p>
 
                         <!-- LLM UNLOAD TOGGLE (shown whenever MCP is enabled) -->
                         <div id="mcp-llm-toggle-row" style="display: none; background: var(--bg-secondary); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.25rem;">
@@ -1480,15 +1481,15 @@
         
     </script>
 
-    <script type="module" src="static/js/config-manager.js?v=2026-07-14-6707bdd"></script>
-    <script type="module" src="static/js/model-constraints.js?v=2026-07-14-6707bdd"></script>
+    <script type="module" src="static/js/config-manager.js?v=2026-07-15-97471b1"></script>
+    <script type="module" src="static/js/model-constraints.js?v=2026-07-15-97471b1"></script>
     <script src="static/js/viz.js"></script>
     <script src="static/js/webgl-renderer.js"></script>
-    <script src="static/js/hyde-handler.js?v=2026-07-14-6707bdd"></script>
-    <script src="static/js/fast-search.js?v=2026-07-14-6707bdd"></script>
+    <script src="static/js/hyde-handler.js?v=2026-07-15-97471b1"></script>
+    <script src="static/js/fast-search.js?v=2026-07-15-97471b1"></script>
     <script src="static/js/search-enhancement.js"></script>
 
-    <script src="static/js/browser-capabilities.js?v=2026-07-14-6707bdd"></script>
+    <script src="static/js/browser-capabilities.js?v=2026-07-15-97471b1"></script>
 
     <script type="module">
         await import('./static/js/browser-integration.js');
@@ -1696,9 +1697,9 @@
         });
     </script>
 
-    <script src="static/js/export-import.js?v=2026-07-14-6707bdd"></script>
+    <script src="static/js/export-import.js?v=2026-07-15-97471b1"></script>
 
-    <script src="static/js/vectoria.js?v=2026-07-14-6707bdd"></script>
+    <script src="static/js/vectoria.js?v=2026-07-15-97471b1"></script>
 
     <script>
     // Apply LLM unload flag immediately on page load, before pipeline initializes
@@ -1712,10 +1713,57 @@
         if (typeof SharedWorker === 'undefined') return;
 
         let mcpWorker = null;
+        let bridgeStarting = false;
+        let relayProbeStatus = 'checking';
 
-        function startBridge() {
-            if (mcpWorker) return;
-            mcpWorker = new SharedWorker('/static/js/mcp-bridge-worker.js', { name: 'vectoria-mcp' });
+        async function localNetworkPermissionState() {
+            if (!navigator.permissions?.query) return 'unknown';
+            for (const name of ['local-network', 'loopback-network']) {
+                try {
+                    const result = await navigator.permissions.query({ name });
+                    if (result?.state) return result.state;
+                } catch (_) { /* permission name not supported by this browser */ }
+            }
+            return 'unknown';
+        }
+
+        async function primeLocalRelayAccess() {
+            try {
+                // Chrome requires a public page to request Local Network Access
+                // from the main document before a SharedWorker can use loopback.
+                const response = await fetch('http://127.0.0.1:3700/health', {
+                    method: 'GET',
+                    mode: 'cors',
+                    cache: 'no-store',
+                    credentials: 'omit'
+                });
+                return response.ok ? 'ready' : 'unavailable';
+            } catch (_) {
+                return (await localNetworkPermissionState()) === 'denied' ? 'blocked' : 'unavailable';
+            }
+        }
+
+        async function startBridge() {
+            if (mcpWorker || bridgeStarting) return;
+            bridgeStarting = true;
+            updateMCPStatusUI('checking');
+            relayProbeStatus = await primeLocalRelayAccess();
+
+            // The versioned URL and worker name are both required. A named
+            // SharedWorker can otherwise survive a deploy and keep executing
+            // an older relay URL for the lifetime of the browser profile.
+            try {
+                const workerUrl = '/static/js/mcp-bridge-worker.js?v=2026-07-15-97471b1';
+                const workerVersion = new URL(workerUrl, window.location.href).searchParams.get('v');
+                mcpWorker = new SharedWorker(workerUrl, {
+                    name: `vectoria-mcp-${workerVersion}`
+                });
+            } catch (_) {
+                bridgeStarting = false;
+                updateMCPStatusUI(relayProbeStatus === 'ready' ? 'unavailable' : relayProbeStatus);
+                return;
+            }
+            bridgeStarting = false;
             mcpWorker.port.start();
 
             mcpWorker.port.onmessage = async (evt) => {
@@ -1729,7 +1777,7 @@
 
                 if (type === 'MCP_STATUS' || type === 'MCP_PONG') {
                     const isConnected = status === 'connected' || connected;
-                    updateMCPStatusUI(isConnected ? 'connected' : 'disconnected');
+                    updateMCPStatusUI(isConnected ? 'connected' : (relayProbeStatus === 'ready' ? 'disconnected' : relayProbeStatus));
                     return;
                 }
 
@@ -1931,8 +1979,8 @@
                 }
             };
 
-            mcpWorker.port.onerror = () => updateMCPStatusUI('disconnected');
-            updateMCPStatusUI('disconnected');
+            mcpWorker.port.onerror = () => updateMCPStatusUI(relayProbeStatus === 'ready' ? 'disconnected' : relayProbeStatus);
+            updateMCPStatusUI(relayProbeStatus === 'ready' ? 'disconnected' : relayProbeStatus);
         }
 
         function stopBridge() {
@@ -1940,6 +1988,8 @@
             mcpWorker.port.postMessage({ type: 'MCP_DISCONNECT' });
             mcpWorker.port.close();
             mcpWorker = null;
+            bridgeStarting = false;
+            relayProbeStatus = 'checking';
             updateMCPStatusUI('disabled');
         }
 
@@ -1976,6 +2026,7 @@
         function updateMCPStatusUI(status, clientInfo) {
             const pill = document.getElementById('mcp-bridge-status');
             const relayInfo = document.getElementById('mcp-relay-info');
+            const relayHelp = document.getElementById('mcp-relay-status-help');
             const stepInstall = document.getElementById('mcp-step-install');
             const stepConnected = document.getElementById('mcp-step-connected');
             const toggleConnected = document.getElementById('mcp-bridge-enabled-connected');
@@ -1989,9 +2040,17 @@
 
             const map = {
                 connected:    { text: '● Connected',    bg: '#166534', color: '#86efac' },
-                disconnected: { text: '○ Waiting for local MCP client…', bg: '#78350f', color: '#fcd34d' },
-                unavailable:  { text: 'Local MCP relay not running', bg: 'var(--bg-tertiary)', color: 'var(--text-secondary)' },
+                checking:     { text: '○ Checking local relay…', bg: '#78350f', color: '#fcd34d' },
+                disconnected: { text: '○ Retrying local MCP relay…', bg: '#78350f', color: '#fcd34d' },
+                unavailable:  { text: 'Local MCP relay not reachable', bg: '#78350f', color: '#fcd34d' },
+                blocked:      { text: 'Local Network Access blocked', bg: '#7f1d1d', color: '#fecaca' },
                 disabled:     { text: 'Not installed / disabled', bg: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }
+            };
+            const help = {
+                checking: 'Checking the relay and requesting browser permission when required.',
+                disconnected: 'The relay was found. Keep your AI client open while Vectoria reconnects.',
+                unavailable: 'Fully quit and reopen your AI client. If your browser asks for Local Network Access, choose Allow, then turn the bridge off and on.',
+                blocked: 'Allow Local Network Access for vectoria.app in your browser site settings, then turn the bridge off and on.'
             };
             const s = map[status] || map.disabled;
             if (pill) {
@@ -2001,13 +2060,16 @@
                 pill.style.background = s.bg;
                 pill.style.color = s.color;
             }
+            if (relayHelp) {
+                relayHelp.textContent = help[status] || '';
+                relayHelp.style.display = help[status] ? 'block' : 'none';
+            }
 
-            const isLive = status === 'connected' || status === 'disconnected';
-            if (relayInfo) relayInfo.style.display = isLive ? 'inline' : 'none';
-            // 'unavailable' and 'disabled' both show the install instructions step.
-            if (stepInstall) stepInstall.style.display = isLive ? 'none' : 'block';
-            if (stepConnected) stepConnected.style.display = isLive ? 'block' : 'none';
-            if (toggleConnected) toggleConnected.checked = true;
+            const isEnabled = status !== 'disabled';
+            if (relayInfo) relayInfo.style.display = isEnabled ? 'inline' : 'none';
+            if (stepInstall) stepInstall.style.display = isEnabled ? 'none' : 'block';
+            if (stepConnected) stepConnected.style.display = isEnabled ? 'block' : 'none';
+            if (toggleConnected) toggleConnected.checked = isEnabled;
         }
 
         function wireToggles() {

@@ -35,26 +35,27 @@ function Save-Config([string]$Path, $Config) {
     $Config | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 $Path
 }
 
-function Add-ClientConfig($Client, [string]$NodeExe, [string]$Entry) {
+function Add-ClientConfig($Client, [string]$NodeExe, [string]$Entry, [string]$AllowedOrigin) {
     $Config = Read-Config $Client.Path
+    $ServerArgs = @($Entry, "--allowed-origin", $AllowedOrigin)
     switch ($Client.Format) {
         "mcp_object" {
             if (-not $Config.mcpServers) { Set-Property $Config "mcpServers" ([pscustomobject]@{}) }
-            Set-Property $Config.mcpServers "vectoria" ([pscustomobject]@{ command = $NodeExe; args = @($Entry) })
+            Set-Property $Config.mcpServers "vectoria" ([pscustomobject]@{ command = $NodeExe; args = $ServerArgs })
         }
         "opencode" {
             if (-not $Config.mcp) { Set-Property $Config "mcp" ([pscustomobject]@{}) }
-            Set-Property $Config.mcp "vectoria" ([pscustomobject]@{ type = "local"; command = @($NodeExe, $Entry) })
+            Set-Property $Config.mcp "vectoria" ([pscustomobject]@{ type = "local"; command = @($NodeExe) + $ServerArgs })
         }
         "zed" {
             if (-not $Config.context_servers) { Set-Property $Config "context_servers" ([pscustomobject]@{}) }
             Set-Property $Config.context_servers "vectoria" ([pscustomobject]@{
-                command = [pscustomobject]@{ path = $NodeExe; args = @($Entry) }
+                command = [pscustomobject]@{ path = $NodeExe; args = $ServerArgs }
             })
         }
         "continue" {
             $Servers = @($Config.mcpServers | Where-Object { $_.name -ne "vectoria" })
-            $Servers += [pscustomobject]@{ name = "vectoria"; command = $NodeExe; args = @($Entry) }
+            $Servers += [pscustomobject]@{ name = "vectoria"; command = $NodeExe; args = $ServerArgs }
             Set-Property $Config "mcpServers" $Servers
         }
     }
@@ -117,7 +118,7 @@ $Skipped = @()
 foreach ($Client in $Clients) {
     $Directory = Split-Path -Parent $Client.Path
     if ((Test-Path $Directory) -or (Test-Path $Client.Path)) {
-        Add-ClientConfig $Client $Node.Source (Join-Path $InstallDir "index.js")
+        Add-ClientConfig $Client $Node.Source (Join-Path $InstallDir "index.js") $BaseUrl
         $Configured += $Client.Name
         Write-Host "   configured $($Client.Name)" -ForegroundColor Green
     } else { $Skipped += $Client.Name }
@@ -132,4 +133,5 @@ Write-Host "Next steps:"
 Write-Host "1. Fully quit and reopen your AI client(s)."
 Write-Host "2. Open Vectoria in your browser."
 Write-Host "3. Advanced Settings -> MCP Bridge -> enable the toggle."
-Write-Host "4. The AI client launches the local MCP server automatically."
+Write-Host "4. Allow Local Network Access if your browser prompts."
+Write-Host "5. The AI client launches the local MCP server automatically."

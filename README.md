@@ -287,7 +287,8 @@ The script detects which AI clients are installed on your machine and configures
 
 1. Open Vectoria in your browser (e.g. `https://vectoria.app` or your local `http://localhost:5050`)
 2. Go to **Advanced Settings → MCP Bridge** → enable the toggle
-3. Status shows **● Connected · Claude Desktop** (or whichever client connected)
+3. If prompted, allow Vectoria to access devices on your local network
+4. Status shows **● Connected · Claude Desktop** (or whichever client connected)
 
 > The MCP bridge runs locally on your machine (`ws://127.0.0.1:3700`). Your browser tab connects to it directly — no data leaves your computer, regardless of where Vectoria itself is hosted.
 
@@ -309,7 +310,7 @@ Claude Desktop / Cursor (`mcpServers` object):
   "mcpServers": {
     "vectoria": {
       "command": "/absolute/path/to/node",
-      "args": ["/Users/you/.vectoria-mcp/index.js"]
+      "args": ["/Users/you/.vectoria-mcp/index.js", "--allowed-origin", "https://vectoria.app"]
     }
   }
 }
@@ -321,7 +322,7 @@ OpenCode (`~/.config/opencode/config.json`):
   "mcp": {
     "vectoria": {
       "type": "local",
-      "command": ["/absolute/path/to/node", "/Users/you/.vectoria-mcp/index.js"]
+      "command": ["/absolute/path/to/node", "/Users/you/.vectoria-mcp/index.js", "--allowed-origin", "https://vectoria.app"]
     }
   }
 }
@@ -334,7 +335,7 @@ Zed (`~/.config/zed/settings.json`):
     "vectoria": {
       "command": {
         "path": "/absolute/path/to/node",
-        "args": ["/Users/you/.vectoria-mcp/index.js"]
+        "args": ["/Users/you/.vectoria-mcp/index.js", "--allowed-origin", "https://vectoria.app"]
       }
     }
   }
@@ -348,7 +349,7 @@ Continue.dev (`~/.continue/config.json`):
     {
       "name": "vectoria",
       "command": "/absolute/path/to/node",
-      "args": ["/Users/you/.vectoria-mcp/index.js"]
+      "args": ["/Users/you/.vectoria-mcp/index.js", "--allowed-origin", "https://vectoria.app"]
     }
   ]
 }

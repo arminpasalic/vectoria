@@ -4,12 +4,12 @@
  */
 
 // BUILD_ID is auto-stamped by `npm run stamp` (scripts/stamp-version.js) from
-// the git date + short SHA, and kept in sync with the ?v= query strings in
+// a date + deployable-content hash, and kept in sync with the ?v= query strings in
 // index.html. Do NOT edit by hand — run `npm run stamp` before committing a
 // release. The SW uses it for the cache name (so old caches get evicted in the
 // activate handler) and appends it as a ?v= query string to every precached
 // URL (so a stale Vercel/CDN immutable copy is not served after a deploy).
-const BUILD_ID = '2026-07-14-6707bdd';
+const BUILD_ID = '2026-07-15-97471b1';
 const CACHE_VERSION = `vectoria-${BUILD_ID}`;
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
@@ -35,6 +35,7 @@ const STATIC_ASSETS = [
     v('/static/js/browser-capabilities.js'),
     v('/static/js/config-manager.js'),
     v('/static/js/model-constraints.js'),
+    v('/static/js/mcp-bridge-worker.js'),
     v('/static/js/export-import.js'),
     v('/static/js/vectoria.js'),
     v('/static/js/browser-ml/index.js'),
@@ -159,4 +160,3 @@ self.addEventListener('message', (event) => {
         );
     }
 });
-

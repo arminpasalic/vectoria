@@ -13,7 +13,10 @@ import { registerClusterTools } from './tools/clusters.js';
 import { registerMetricTools } from './tools/metrics.js';
 import { registerSessionTools } from './tools/sessions.js';
 
-const bridge = new BrowserBridge();
+const allowedOriginArgs = process.argv
+  .flatMap((arg, index, args) => arg === '--allowed-origin' ? [args[index + 1]] : [])
+  .filter(Boolean);
+const bridge = new BrowserBridge(3700, '127.0.0.1', allowedOriginArgs);
 await bridge.start();
 
 const server = new McpServer({
