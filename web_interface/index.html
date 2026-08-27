@@ -3,17 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Vectoria - A fully browser-native semantic search and RAG system. Load your documents, generate embeddings, cluster, search and chat with your data. No backend, 100% client-side running on your device.">
-    <meta name="theme-color" content="#1a1a2e">
+    <meta name="description" content="Vectoria is a browser-first text explorer for clustering, semantic search, and evidence-linked AI analysis. Your documents stay on your device.">
+    <meta name="theme-color" content="#050505">
     <meta property="og:title" content="Vectoria - Browser-first text exploration, clustering, and semantic search">
-    <meta property="og:description" content="Load your documents, generate embeddings, cluster, search, and chat with your data. Everything runs locally in your browser.">
+    <meta property="og:description" content="Search, map, compare, and understand private text collections locally, with generated conclusions connected to inspectable evidence.">
     <meta property="og:type" content="website">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="Vectoria - Browser-Native Semantic Search & RAG">
     <title>Vectoria - Browser-Native Text Explorer</title>
 
     <script>
-        // Immediately apply dark mode class from localStorage to prevent FOUC
+        // Apply persisted, paint-critical UI state before styles and body content
+        // are parsed so refreshes never show an incorrect intermediate frame.
         (function() {
             try {
                 const storedTheme = localStorage.getItem('vectoria_theme_preference');
@@ -23,12 +24,30 @@
                 } else {
                     document.documentElement.classList.add('light');
                     document.documentElement.setAttribute('data-theme', 'light');
+                    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#F0F0F0');
                 }
             } catch (e) {
                 console.warn('Failed to read theme from localStorage:', e);
                 // Fallback to default dark
                 document.documentElement.classList.add('dark');
                 document.documentElement.setAttribute('data-theme', 'dark');
+            }
+
+            try {
+                const hasVisited = localStorage.getItem('vectoria_has_visited') === 'true';
+                const hasHandledSetup = localStorage.getItem('vectoria_models_prompted') === 'true';
+                const modelsReady = localStorage.getItem('vectoria_models_ready') === 'true';
+                const hasModels = modelsReady
+                    || localStorage.getItem('vectoria_models_cached') === 'true';
+                if (hasModels || (hasVisited && hasHandledSetup)) {
+                    document.documentElement.classList.add('returning-visitor');
+                }
+                if (modelsReady) {
+                    document.documentElement.classList.add('models-ready');
+                }
+                localStorage.setItem('vectoria_has_visited', 'true');
+            } catch (_) {
+                // Keep the first-visit copy when storage is unavailable.
             }
         })();
     </script>
@@ -38,23 +57,20 @@
     <link rel="preconnect" href="https://esm.run" crossorigin>
     <link rel="dns-prefetch" href="https://huggingface.co">
 
-    <link rel="stylesheet" href="static/css/main.css?v=2026-07-15-97471b1">
-    <link rel="stylesheet" href="static/css/browser-ml.css">
+    <link rel="stylesheet" href="static/css/main.css?v=2026-08-27-b64b785">
+    <link rel="stylesheet" href="static/css/browser-ml.css?v=2026-08-27-b64b785">
+    <link rel="stylesheet" href="static/css/explore-workbench.css?v=2026-08-27-b64b785">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.5.4/papaparse.min.js" crossorigin="anonymous" defer></script>
 
-    <link rel="icon" type="image/svg+xml" href="static/img/favicon.svg">
-    <link rel="apple-touch-icon" href="static/img/favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="static/img/favicon.svg?v=2026-08-27-b64b785">
+    <link rel="apple-touch-icon" href="static/img/favicon.svg?v=2026-08-27-b64b785">
     <script>
       window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
     </script>
     <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body class="">
-    <div id="filter-notification-banner" class="filter-notification-banner">
-        <span id="filter-notification-text">Filters applied</span>
-    </div>
-
     <div id="cluster-label-progress-banner" class="progress-banner" style="display:none;">
         <div class="progress-banner-text">
             <i class="fas fa-wand-magic-sparkles"></i>
@@ -71,8 +87,8 @@
                 <h1>VECTORIA</h1>
             </div>
             <div class="header-actions">
-                <button id="header-theme-toggle" type="button" class="theme-toggle-btn" aria-label="Toggle dark mode">
-                    <i class="fas fa-moon"></i>
+                <button id="header-settings-btn" type="button" class="theme-toggle-btn" aria-label="Open settings" title="Settings">
+                    <i class="fas fa-cog" aria-hidden="true"></i>
                 </button>
             </div>
         </div>
@@ -81,7 +97,7 @@
     <main class="container">
         <div id="upload-tab" class="tab-content active" style="display: block;">
             <div class="upload-hero">
-                <h2>Load your data</h2>
+                <h2 id="upload-hero-title"><span class="first-visit-title">Load your data</span><span class="returning-visitor-title">Welcome back!</span></h2>
                 <p>Browser-native text exploration, clustering and semantic search. Your data never leaves this device.</p>
             </div>
 
@@ -91,10 +107,10 @@
                 </div>
                 <div class="model-setup-panel-text">
                     <strong>Download AI models</strong>
-                    <p>One-time download of embedding and language models for local processing.</p>
+                    <p>Download once to browser storage. Models load into memory only when needed.</p>
                 </div>
                 <button type="button" id="start-model-setup-btn" class="btn btn-primary">
-                    Start setup
+                    Download models
                 </button>
             </div>
 
@@ -156,7 +172,7 @@
                 <button type="button" id="open-advanced-settings" class="btn btn-secondary upload-settings-btn">
                     <i class="fas fa-cog"></i> Advanced settings
                 </button>
-                <small class="upload-settings-desc">Configure models, RAG parameters, clustering, and visualization</small>
+                <small class="upload-settings-desc">Configure models, data preparation, document answers, and clustering</small>
             </div>
 
             <div id="column-selection" class="column-selection-section" style="display: none;">
@@ -242,28 +258,49 @@
                     </button>
                 </div>
 
-                <div class="search-options-compact">
-                    <div class="option-group">
-                        <select id="search-type" class="form-control">
-                            <option value="fast" selected>Keyword search</option>
-                            <option value="semantic">Semantic search</option>
-                            <option value="rag">Ask AI (RAG)</option>
-                        </select>
+                <button id="explore-options-btn" class="explore-options-btn btn btn-outline" type="button"
+                        aria-label="Explore options" aria-haspopup="dialog" aria-controls="explore-options-panel" aria-expanded="false">
+                    <i class="fas fa-sliders" aria-hidden="true"></i>
+                </button>
+
+                <div id="explore-options-panel" class="explore-options-panel">
+                    <div class="search-options-compact">
+                        <div class="option-group">
+                            <select id="search-type" class="form-control" aria-label="Search mode">
+                                <option value="fast" selected>Keyword</option>
+                                <option value="semantic">Semantic</option>
+                                <option value="hybrid">Hybrid</option>
+                            </select>
+                        </div>
+                        <div class="option-group" id="result-count-group" style="display: none;">
+                            <select id="result-count" class="form-control" aria-label="Number of results">
+                                <option value="5" selected>5 results</option>
+                                <option value="10">10 results</option>
+                                <option value="20">20 results</option>
+                                <option value="50">50 results</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="option-group" id="result-count-group" style="display: none;">
-                        <select id="result-count" class="form-control">
-                            <option value="5" selected>5 results</option>
-                            <option value="10">10 results</option>
-                            <option value="20">20 results</option>
-                            <option value="50">50 results</option>
-                        </select>
-                    </div>
-                    <div class="option-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="highlight-results" checked>
-                            <span class="checkbox-custom"></span>
-                            Highlight
-                        </label>
+
+                    <div class="dataset-actions">
+                        <button id="dataset-actions-btn" class="btn btn-sm btn-outline" type="button"
+                                aria-haspopup="dialog" aria-controls="dataset-actions-menu" aria-expanded="false">
+                            <i class="fas fa-database" aria-hidden="true"></i> Dataset actions
+                        </button>
+                        <div id="dataset-actions-menu" class="dataset-actions-menu" role="dialog" aria-label="Dataset actions" hidden>
+                            <button id="export-selection-btn" class="btn btn-secondary btn-sm" type="button" disabled title="Export full dataset" style="display:none;">
+                                <i class="fas fa-download" aria-hidden="true"></i> Export data
+                            </button>
+                            <div id="cluster-label-toolbar" class="cluster-label-toolbar" style="display:none;">
+                                <button id="quick-analysis-btn" type="button" class="btn btn-secondary btn-sm btn-cluster-toolbar"><i class="fas fa-chart-column" aria-hidden="true"></i> Analyze</button>
+                                <label for="cluster-summarizer-quick">AI provider</label>
+                                <select id="cluster-summarizer-quick" class="cluster-summarizer-quick" title="Which AI labels the clusters">
+                                    <option value="local">Local LLM</option>
+                                    <option value="external">AI client via MCP</option>
+                                </select>
+                                <button id="cluster-label-all-quick" type="button" class="btn btn-primary btn-sm btn-cluster-toolbar"><i class="fas fa-wand-magic-sparkles" aria-hidden="true"></i> Label clusters</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -316,27 +353,27 @@
                         <div class="ai-answer-body">
                             <div id="rag-answer-text" class="ai-answer-text"></div>
                             <p id="rag-context-warning" class="rag-context-warning" style="display: none;"></p>
-                            <p id="rag-disclaimer" class="rag-disclaimer">Disclaimer: AI-generated answer is based on retrieved documents. It may contain errors. <span id="rag-duration" class="rag-duration"></span></p>
+                            <p id="rag-disclaimer" class="rag-disclaimer">AI-generated answers can be inaccurate. Verify important claims in the cited sources. <span id="rag-duration" class="rag-duration"></span></p>
                         </div>
                     </div>
 
-                    <div id="hyde-modal" class="modal" style="display: none;">
+                    <div id="hyde-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="hyde-modal-title" style="display: none;">
                         <div class="modal-content" style="max-width: 700px;">
                             <div class="modal-header">
-                                <h3><i class="fas fa-magic"></i> HyDE Hypothetical Answer</h3>
-                                <button class="modal-close" onclick="document.getElementById('hyde-modal').style.display='none'">&times;</button>
+                                <h3 id="hyde-modal-title"><i class="fas fa-magic" aria-hidden="true"></i> HyDE Hypothetical Answer</h3>
+                                <button class="modal-close" aria-label="Close HyDE answer" onclick="document.getElementById('hyde-modal').style.display='none'">&times;</button>
                             </div>
                             <div class="modal-body">
                                 <p style="color: var(--text-secondary); margin-bottom: 12px;">
                                     This is the hypothetical answer generated by HyDE before retrieval:
                                 </p>
-                                <div id="hyde-answer-content" style="background: var(--input-bg); padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); white-space: pre-wrap; font-size: 14px;"></div>
+                                <div id="hyde-answer-content" style="background: var(--input-bg); padding: 16px; border-radius: 8px; border: 1px solid var(--control-border); white-space: pre-wrap; font-size: 14px;"></div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <button type="button" id="toggle-hyde-mode" style="display: none;"></button>
+                <button type="button" id="toggle-hyde-mode" aria-label="Toggle HyDE mode" style="display: none;"></button>
                 <span id="hyde-mode-indicator" style="display: none;"></span>
 
                 <div id="filter-status-bar" class="filter-status-bar" style="display: none;">
@@ -362,7 +399,36 @@
             </div>
 
             <div class="visualization-text-container">
+                <nav class="workspace-pane-switcher" role="tablist" aria-label="Explore panes">
+                    <button type="button" role="tab" data-workspace-pane="map" aria-selected="true">Map</button>
+                    <button type="button" role="tab" data-workspace-pane="documents" aria-selected="false">Documents</button>
+                    <button type="button" role="tab" data-workspace-pane="chat" aria-selected="false">Ask</button>
+                    <button type="button" role="tab" data-workspace-pane="filters" aria-selected="false">Filters</button>
+                </nav>
                 <div class="main-viz-text-container">
+                    <aside id="workspace-filters" class="filters-panel-container" data-workspace-surface="filters" aria-label="Dataset filters">
+                        <button id="workspace-filter-rail" class="workspace-filter-rail" type="button" aria-label="Open filters" aria-controls="workspace-filters" aria-expanded="false">
+                            <i class="fas fa-filter" aria-hidden="true"></i><span>Filters</span>
+                        </button>
+                        <div class="card">
+                            <div class="card-header filter-panel-header">
+                                <h2>Filters</h2>
+                                <button id="workspace-filter-close" class="workspace-filter-close" type="button" aria-label="Close filters"><i class="fas fa-times" aria-hidden="true"></i></button>
+                            </div>
+                            <div class="card-body filter-panel-body">
+                                <p class="filter-interaction-hint">
+                                    <i class="fas fa-computer-mouse" aria-hidden="true"></i>
+                                    <span><strong>Double-click</strong> a value to add or remove it. Choose several to combine them.</span>
+                                </p>
+                                <div id="metadata-filters-section" class="metadata-filters-section">
+                                    <div id="metadata-filters-grid" class="metadata-filter-grid"></div>
+                                </div>
+                            </div>
+                            <div class="metadata-filter-actions filter-panel-footer">
+                                <button id="clear-metadata-filters" class="clear-filters-btn">Clear All</button>
+                            </div>
+                        </div>
+                    </aside>
                     <div class="viz-column">
                         <div class="card fullheight-card">
                             <div class="card-body visualization-wrapper">
@@ -376,71 +442,151 @@
                                     <div id="tooltip" class="tooltip"></div>
                                 </div>
                                 <div class="viz-controls-panel">
-                                    <button id="zoom-in-btn" class="viz-control-btn">
-                                        <i class="fas fa-search-plus"></i>
+                                    <button id="zoom-in-btn" class="viz-control-btn" aria-label="Zoom in">
+                                        <i class="fas fa-search-plus" aria-hidden="true"></i>
                                     </button>
-                                    <button id="zoom-out-btn" class="viz-control-btn">
-                                        <i class="fas fa-search-minus"></i>
+                                    <button id="zoom-out-btn" class="viz-control-btn" aria-label="Zoom out">
+                                        <i class="fas fa-search-minus" aria-hidden="true"></i>
                                     </button>
-                                    <button id="reset-view-btn" class="viz-control-btn">
-                                        <i class="fas fa-home"></i>
+                                    <button id="reset-view-btn" class="viz-control-btn" aria-label="Reset view">
+                                        <i class="fas fa-home" aria-hidden="true"></i>
                                     </button>
-                                    <button id="fullscreen-btn" class="viz-control-btn">
-                                        <i class="fas fa-expand"></i>
+                                    <button id="fullscreen-btn" class="viz-control-btn" aria-label="Enter fullscreen">
+                                        <i class="fas fa-expand" aria-hidden="true"></i>
                                     </button>
-                                    <button id="toggle-labels-btn" class="viz-control-btn">
-                                        <i class="fas fa-font"></i>
+                                    <button id="toggle-labels-btn" class="viz-control-btn" aria-label="Toggle labels" aria-pressed="false">
+                                        <i class="fas fa-font" aria-hidden="true"></i>
                                     </button>
-                                    <button id="lasso-select-btn" class="viz-control-btn">
-                                        <i class="fas fa-draw-polygon"></i>
+                                    <button id="lasso-select-btn" class="viz-control-btn" aria-label="Lasso selection" aria-pressed="false">
+                                        <i class="fas fa-draw-polygon" aria-hidden="true"></i>
                                     </button>
-                                    <button id="screenshot-btn" class="viz-control-btn">
-                                        <i class="fas fa-camera"></i>
+                                    <button id="screenshot-btn" class="viz-control-btn" aria-label="Take screenshot">
+                                        <i class="fas fa-camera" aria-hidden="true"></i>
                                     </button>
-                                    <button id="toggle-outliers-btn" class="viz-control-btn">
-                                        <i class="fas fa-ban"></i>
+                                    <button id="toggle-outliers-btn" class="viz-control-btn" aria-label="Hide outliers" aria-pressed="false">
+                                        <i class="fas fa-ban" aria-hidden="true"></i>
+                                    </button>
+                                    <button id="viz-more-btn" class="viz-control-btn viz-more-btn" type="button" aria-label="More map controls" aria-haspopup="menu" aria-expanded="false">
+                                        <i class="fas fa-ellipsis" aria-hidden="true"></i>
                                     </button>
                                 </div>
-                            </div>
-                        </div>
-                        <div class="filters-panel-container">
-                            <div class="card">
-                                <div class="card-header card-header-with-toolbar">
-                                    <h2>Filters</h2>
-                                    <div id="cluster-label-toolbar" class="cluster-label-toolbar" style="display:none;">
-                                        <button id="quick-analysis-btn" type="button" class="btn-label-clusters" title="Quick statistics & analysis of your data">
-                                            <i class="fas fa-chart-column"></i> Analyze
-                                        </button>
-                                        <select id="cluster-summarizer-quick" class="cluster-summarizer-quick" title="Which AI labels the clusters">
-                                            <option value="local">Local LLM</option>
-                                        </select>
-                                        <button id="cluster-label-all-quick" type="button" class="btn-label-clusters" title="Auto-label all clusters with AI">
-                                            <i class="fas fa-wand-magic-sparkles"></i> Label clusters
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="card-body">
-                                    <div id="metadata-filters-section" class="metadata-filters-section">
-                                        <div id="metadata-filters-grid" class="metadata-filter-grid">
-                                        </div>
-                                        <div class="metadata-filter-actions">
-                                            <button id="apply-metadata-filters" class="apply-filters-btn">Apply Filters</button>
-                                            <button id="clear-metadata-filters" class="clear-filters-btn">Clear All</button>
-                                        </div>
-                                    </div>
+                                <div id="viz-more-menu" class="viz-more-menu" role="menu" hidden>
+                                    <button type="button" role="menuitem" data-control-target="toggle-labels-btn">Labels</button>
+                                    <button type="button" role="menuitem" data-control-target="fullscreen-btn">Fullscreen</button>
+                                    <button type="button" role="menuitem" data-control-target="screenshot-btn">Screenshot</button>
+                                    <button type="button" role="menuitem" data-control-target="toggle-outliers-btn">Outliers</button>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="text-column">
+                    <div id="workspace-splitter" class="workspace-splitter" role="separator" aria-label="Resize document workspace" aria-orientation="vertical" aria-controls="workspace-evidence-panel" aria-valuemin="22" aria-valuenow="38" aria-valuemax="55" tabindex="0"></div>
+
+                    <div id="workspace-evidence-panel" class="text-column" data-workspace-surface="evidence">
                         <div class="card fullheight-card">
-                            <div class="card-header">
-                                <h2>Text Content <span id="text-content-count" class="text-count">(0)</span></h2>
+                            <div class="card-header workspace-panel-header">
+                                <div class="workspace-view-tabs" role="tablist" aria-label="Document workspace">
+                                    <button id="workspace-documents-tab" class="workspace-view-tab active" type="button" role="tab" aria-selected="true" aria-controls="documents-workspace">
+                                        Documents <span id="text-content-count" class="text-count">(0)</span>
+                                    </button>
+                                    <button id="workspace-chat-tab" class="workspace-view-tab" type="button" role="tab" aria-selected="false" aria-controls="chat-workspace">
+                                        <i class="fas fa-comment-dots" aria-hidden="true"></i> Ask
+                                    </button>
+                                </div>
+                                <div id="chat-toolbar" class="chat-toolbar" hidden>
+                                    <div class="chat-overflow">
+                                        <button id="chat-settings-btn" class="chat-toolbar-btn" type="button" title="Ask settings" aria-label="Ask settings" aria-haspopup="dialog" aria-expanded="false">
+                                            <i class="fas fa-sliders" aria-hidden="true"></i>
+                                        </button>
+                                        <div id="chat-settings-panel" class="chat-settings-panel" role="dialog" aria-label="Ask settings" hidden>
+                                            <div class="chat-settings-heading">
+                                                <strong>Ask your documents setup</strong>
+                                                <span>Applies to future questions until changed</span>
+                                                <button id="chat-settings-close" class="chat-settings-close" type="button" aria-label="Close Ask settings" title="Close Ask settings">
+                                                    <i class="fas fa-times" aria-hidden="true"></i>
+                                                </button>
+                                            </div>
+                                            <section class="chat-settings-group" aria-labelledby="chat-retrieval-settings-title">
+                                                <h3 id="chat-retrieval-settings-title">Retrieval</h3>
+                                                <label class="chat-setting-toggle">
+                                                    <input id="chat-hyde-toggle" type="checkbox">
+                                                    <span><strong>HyDE retrieval</strong><small>Document questions only · review required before semantic search.</small></span>
+                                                </label>
+                                                <div class="chat-setting-grid">
+                                                    <label class="chat-setting-field" for="chat-source-count">
+                                                        <span>Context sources</span>
+                                                        <input id="chat-source-count" type="number" min="1" max="20" step="1" value="5">
+                                                        <small>Relevance and the context budget can yield fewer.</small>
+                                                    </label>
+                                                    <label class="chat-setting-field" for="chat-similarity-threshold">
+                                                        <span>Minimum similarity</span>
+                                                        <input id="chat-similarity-threshold" type="number" min="0" max="1" step="0.05" value="0.7">
+                                                    </label>
+                                                </div>
+                                                <label class="chat-setting-field" for="chat-metadata-mode">
+                                                    <span>Metadata in evidence</span>
+                                                    <select id="chat-metadata-mode">
+                                                        <option value="off" selected>No metadata</option>
+                                                        <option value="selected">Selected fields</option>
+                                                        <option value="all">All metadata</option>
+                                                    </select>
+                                                    <small>Helps interpret retrieved sources; it does not filter or rerank search.</small>
+                                                </label>
+                                                <label id="chat-metadata-fields-group" class="chat-setting-field" for="chat-metadata-fields" hidden>
+                                                    <span>Metadata fields</span>
+                                                    <select id="chat-metadata-fields" multiple size="4" aria-label="Metadata fields included in answer evidence"></select>
+                                                </label>
+                                            </section>
+                                            <section class="chat-settings-group" aria-labelledby="chat-memory-settings-title">
+                                                <h3 id="chat-memory-settings-title">Conversation context</h3>
+                                                <div class="chat-setting-grid">
+                                                    <label class="chat-setting-field" for="chat-memory-mode">
+                                                        <span>Context memory</span>
+                                                        <select id="chat-memory-mode">
+                                                            <option value="adaptive">Smart summary</option>
+                                                            <option value="recent">Recent turns only</option>
+                                                            <option value="none">This question only</option>
+                                                        </select>
+                                                    </label>
+                                                    <label id="chat-memory-turns-group" class="chat-setting-field" for="chat-memory-turns">
+                                                        <span>Maximum turns</span>
+                                                        <input id="chat-memory-turns" type="number" min="1" max="50" step="1" value="8">
+                                                    </label>
+                                                </div>
+                                            </section>
+                                            <div class="chat-settings-boundary">
+                                                Ask your documents setup contains frequently changed defaults for future questions. Search &amp; Answers contains deeper retrieval, generation, prompt, and HyDE defaults shared by document-answer flows.
+                                            </div>
+                                            <div class="chat-settings-links">
+                                                <strong>More settings</strong>
+                                                <button id="chat-open-rag-settings" type="button"><i class="fas fa-message" aria-hidden="true"></i> Search, prompts &amp; generation</button>
+                                                <button id="chat-open-model-settings" type="button"><i class="fas fa-microchip" aria-hidden="true"></i> Models &amp; context capacity</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="chat-overflow">
+                                        <button id="chat-export-btn" class="chat-toolbar-btn" type="button" title="Ask history options" aria-label="Ask history options" aria-haspopup="menu" aria-expanded="false">
+                                            <i class="fas fa-ellipsis" aria-hidden="true"></i>
+                                        </button>
+                                        <div id="chat-export-menu" class="chat-export-menu" role="menu" hidden>
+                                            <button type="button" role="menuitem" data-chat-export="json">Export JSON</button>
+                                            <button type="button" role="menuitem" data-chat-export="csv">Export CSV</button>
+                                            <button type="button" role="menuitem" data-chat-export="markdown">Export Markdown</button>
+                                            <hr role="separator">
+                                            <button id="chat-trim-memory" type="button" role="menuitem">Forget earlier model context</button>
+                                        </div>
+                                    </div>
+                                    <button id="chat-new-btn" class="chat-toolbar-btn" type="button" title="Start a new investigation" aria-label="Start a new investigation">
+                                        <i class="fas fa-pen-to-square" aria-hidden="true"></i>
+                                    </button>
+                                </div>
                             </div>
-                            <div class="card-body">
+                            <div id="documents-workspace" class="card-body workspace-view" role="tabpanel" aria-labelledby="workspace-documents-tab">
                                 <div id="text-display-container" class="text-display-container">
                                     <div id="text-list" class="text-list scrollable-list">
+                                    </div>
+                                    <div id="text-list-pagination" class="text-list-pagination" hidden>
+                                        <button id="text-list-load-more" class="btn btn-sm btn-outline" type="button">Show 100 more documents</button>
                                     </div>
                                     <div id="selected-text-view" class="selected-text-view" style="display: none;">
                                         <button id="back-to-list-btn" class="btn btn-sm back-to-list-btn">
@@ -451,215 +597,196 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="text-content-footer">
-                                <button id="export-selection-btn" class="btn btn-secondary btn-sm" disabled title="Export full dataset" style="display:none;">
-                                    <i class="fas fa-download"></i> Export data
-                                </button>
+                            <div id="chat-workspace" class="workspace-view chat-workspace" role="tabpanel" aria-labelledby="workspace-chat-tab" hidden>
+                                <div id="chat-external-note" class="chat-external-note" hidden>
+                                    <i class="fas fa-arrow-up-right-from-square" aria-hidden="true"></i>
+                                    <div>
+                                        <strong>Continue in your AI client</strong>
+                                        <p>Website Ask is paused in AI-client mode. Continue through Vectoria’s MCP tools, or switch back to the local browser model. Your local investigation history will be restored after reload.</p>
+                                        <button id="chat-enable-local-btn" type="button">Enable local document answers…</button>
+                                    </div>
+                                </div>
+                                <div id="chat-model-note" class="chat-external-note" hidden>
+                                    <i class="fas fa-microchip" aria-hidden="true"></i>
+                                    <div>
+                                        <strong>Set up local AI for document answers</strong>
+                                        <p>Greetings and interface help work now. Download the local models when you want document-grounded answers.</p>
+                                        <button id="chat-open-model-setup" type="button">Set up local document answers…</button>
+                                    </div>
+                                </div>
+                                <div id="chat-empty-state" class="chat-empty-state">
+                                    <div class="chat-empty-icon"><i class="fas fa-comments" aria-hidden="true"></i></div>
+                                    <h3>Ask your documents</h3>
+                                    <p>Ask a question about the dataset. Vectoria searches your documents and generates a local answer with traceable sources.</p>
+                                    <div id="chat-suggestions" class="chat-suggestions" aria-label="Suggested questions" aria-live="polite" aria-busy="false">
+                                        <button type="button" data-chat-suggestion="What are the main themes in these documents?">What are the main themes?</button>
+                                        <button type="button" data-chat-suggestion="Summarize the most important findings and cite the sources.">Summarize key findings</button>
+                                    </div>
+                                </div>
+                                <div id="chat-messages" class="chat-messages" aria-label="Question and answer investigation history"></div>
+                                <div id="chat-memory-note" class="chat-memory-note" hidden>
+                                    <span><i class="fas fa-scissors" aria-hidden="true"></i> Earlier messages remain visible but are excluded from future model context.</span>
+                                    <button id="chat-restore-memory" type="button">Use all messages</button>
+                                </div>
+                                <div id="chat-live-status" class="chat-live-status" role="status" aria-live="polite"></div>
+                                <div class="chat-composer-shell">
+                                    <div class="chat-composer-row">
+                                        <textarea id="chat-input" rows="1" maxlength="12000" placeholder="Ask a question about your documents…" aria-label="Question"></textarea>
+                                        <button id="chat-send-btn" class="chat-send-btn" type="button" aria-label="Submit question" title="Submit question">
+                                            <i class="fas fa-arrow-up" aria-hidden="true"></i>
+                                        </button>
+                                        <button id="chat-stop-btn" class="chat-stop-btn" type="button" aria-label="Stop generation" title="Stop generation" hidden>
+                                            <i class="fas fa-stop" aria-hidden="true"></i>
+                                        </button>
+                                    </div>
+                                    <div class="chat-composer-meta">
+                                        <label for="chat-scope-select">Search</label>
+                                        <select id="chat-scope-select" aria-label="Answer document scope">
+                                            <option value="all">All documents</option>
+                                            <option value="current">Current view</option>
+                                        </select>
+                                        <span id="chat-config-summary" class="chat-config-summary"></span>
+                                        <span id="chat-local-note"><i class="fas fa-lock" aria-hidden="true"></i> Local model</span>
+                                    </div>
+                                    <p id="chat-ai-disclaimer" class="chat-ai-disclaimer" role="note">AI-generated answers can be inaccurate. Verify important claims in the cited sources.</p>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
+                <div id="workspace-live-status" class="workspace-live-status" role="status" aria-live="polite" aria-atomic="true"></div>
             </div>
         </div>
 
-    <div id="advanced-settings-modal" class="modal-overlay" style="display: none;">
+    <div id="advanced-settings-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="advanced-settings-title" style="display: none;">
         <div class="modal-container">
             <div class="modal-header">
-                <h2>Advanced Settings</h2>
-                <button type="button" class="modal-close" id="close-advanced-settings">
-                    <i class="fas fa-times"></i>
+                <h2 id="advanced-settings-title">Settings</h2>
+                <button type="button" class="modal-close" id="close-advanced-settings" aria-label="Close settings">
+                    <i class="fas fa-times" aria-hidden="true"></i>
                 </button>
             </div>
             <div class="modal-body">
                 <div class="settings-categories">
-                    <div class="settings-nav">
-                        <button class="settings-nav-btn active" data-category="storage">
+                    <div class="settings-nav" role="tablist" aria-label="Settings categories">
+                        <button id="settings-tab-storage" class="settings-nav-btn active" type="button" role="tab" aria-selected="true" aria-controls="settings-panel-storage" tabindex="0" data-category="storage">
                             <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-database"></i></span>
-                            <span class="settings-nav-label">Storage &amp; App</span>
+                            <span class="settings-nav-label">General</span>
                         </button>
-                        <button class="settings-nav-btn" data-category="models">
+                        <button id="settings-tab-models" class="settings-nav-btn" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-models" tabindex="-1" data-category="models">
                             <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-microchip"></i></span>
-                            <span class="settings-nav-label">AI Models</span>
+                            <span class="settings-nav-label">Models</span>
                         </button>
-                        <button class="settings-nav-btn" data-category="processing">
+                        <button id="settings-tab-processing" class="settings-nav-btn" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-processing" tabindex="-1" data-category="processing">
                             <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-layer-group"></i></span>
-                            <span class="settings-nav-label">Data Processing</span>
+                            <span class="settings-nav-label">Data preparation</span>
                         </button>
-                        <button class="settings-nav-btn" data-category="rag">
+                        <button id="settings-tab-rag" class="settings-nav-btn" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-rag" tabindex="-1" data-category="rag">
                             <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-search"></i></span>
-                            <span class="settings-nav-label">Search &amp; RAG</span>
+                            <span class="settings-nav-label">Search &amp; answers</span>
                         </button>
-                        <button class="settings-nav-btn" data-category="explore">
+                        <button id="settings-tab-explore" class="settings-nav-btn" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-explore" tabindex="-1" data-category="explore">
                             <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-project-diagram"></i></span>
-                            <span class="settings-nav-label">Explore &amp; Clustering</span>
+                            <span class="settings-nav-label">Projection &amp; clustering</span>
                         </button>
-                        <button class="settings-nav-btn" data-category="mcp">
+                        <button id="settings-tab-mcp" class="settings-nav-btn" type="button" role="tab" aria-selected="false" aria-controls="settings-panel-mcp" tabindex="-1" data-category="mcp">
                             <span class="settings-nav-icon" aria-hidden="true"><i class="fas fa-plug"></i></span>
-                            <span class="settings-nav-label">MCP &amp; Integrations</span>
+                            <span class="settings-nav-label">MCP integration</span>
                         </button>
                     </div>
-                    
-                    <div class="settings-category" data-category="models">
-                        <h3>AI Models</h3>
+                    <div class="settings-content">
+                    <div id="settings-panel-models" class="settings-category" role="tabpanel" aria-labelledby="settings-tab-models" tabindex="0" data-category="models">
+                        <h3>Models</h3>
                         <p class="settings-effect-note"><i class="fas fa-redo"></i> Model and context changes require a reload.</p>
 
+                        <section class="settings-group" aria-labelledby="settings-language-model-title">
+                        <h4 id="settings-language-model-title">Language model</h4>
                         <div class="form-group">
-                            <label for="llm-model-id">Model: <span title="Page reload required">⚠️</span></label>
-                            <select id="llm-model-id" class="form-control">
-                                <optgroup label="Gemma">
-                                    <option value="gemma3-1b-it-q4f16_1-MLC">Gemma 3 1B · ~2.5 GB</option>
-                                    <option value="gemma-2-2b-it-q4f16_1-MLC" selected>Gemma 2 2B · ~1.9 GB</option>
-                                    <option value="gemma-2-9b-it-q4f16_1-MLC">Gemma 2 9B · ~6.4 GB</option>
-                                </optgroup>
-                                <optgroup label="Qwen">
-                                    <option value="Qwen3.5-0.8B-q4f32_1-MLC">Qwen3.5 0.8B · ~1.6 GB</option>
-                                    <option value="Qwen3.5-2B-q4f32_1-MLC">Qwen3.5 2B · ~2.2 GB</option>
-                                    <option value="Qwen3.5-4B-q4f32_1-MLC">Qwen3.5 4B · ~3.9 GB</option>
-                                    <option value="Qwen3.5-9B-q4f32_1-MLC">Qwen3.5 9B · ~6.4 GB</option>
-                                    <option value="Qwen3-0.6B-q4f32_1-MLC">Qwen3 0.6B · ~1.4 GB · Thinking</option>
-                                    <option value="Qwen3-1.7B-q4f32_1-MLC">Qwen3 1.7B · ~2.0 GB · Thinking</option>
-                                    <option value="Qwen3-4B-q4f32_1-MLC">Qwen3 4B · ~3.2 GB · Thinking</option>
-                                    <option value="Qwen3-8B-q4f32_1-MLC">Qwen3 8B · ~5.6 GB · Thinking</option>
-                                </optgroup>
-                                <optgroup label="Llama">
-                                    <option value="Llama-3.2-1B-Instruct-q4f32_1-MLC">Llama 3.2 1B · ~1.1 GB</option>
-                                    <option value="Llama-3.2-3B-Instruct-q4f32_1-MLC">Llama 3.2 3B · ~2.6 GB</option>
-                                    <option value="Llama-3.1-8B-Instruct-q4f32_1-MLC">Llama 3.1 8B · ~4.6 GB</option>
-                                </optgroup>
-                                <optgroup label="Ministral">
-                                    <option value="Ministral-3-3B-Instruct-2512-BF16-q4f32_1-MLC">Ministral 3 3B Instruct · ~2.4 GB</option>
-                                    <option value="Ministral-3-3B-Reasoning-2512-q4f32_1-MLC">Ministral 3 3B Reasoning · ~2.4 GB · Thinking</option>
-                                </optgroup>
-                                <optgroup label="OLMo">
-                                    <option value="OLMo-2-0425-1B-Instruct-q4f32_1-MLC">OLMo 2 1B · ~1.1 GB</option>
-                                    <option value="OLMo-2-1124-7B-Instruct-q4f32_1-MLC">OLMo 2 7B · ~5.1 GB</option>
-                                </optgroup>
-                                <optgroup label="Hermes">
-                                    <option value="Hermes-3-Llama-3.2-3B-q4f32_1-MLC">Hermes 3 Llama 3.2 3B · ~2.6 GB</option>
-                                    <option value="Hermes-3-Llama-3.1-8B-q4f32_1-MLC">Hermes 3 Llama 3.1 8B · ~4.6 GB</option>
-                                </optgroup>
-                                <optgroup label="Phi">
-                                    <option value="Phi-4-mini-instruct-q4f16_1-MLC">Phi 4 Mini · ~5.9 GB</option>
-                                </optgroup>
-                                <optgroup label="SmolLM2">
-                                    <option value="SmolLM2-1.7B-Instruct-q4f32_1-MLC">SmolLM2 1.7B · ~1.8 GB</option>
-                                </optgroup>
-                                <optgroup label="DeepSeek">
-                                    <option value="DeepSeek-R1-Distill-Qwen-7B-q4f32_1-MLC">DeepSeek R1 Qwen 7B · ~5.1 GB · Thinking</option>
-                                    <option value="DeepSeek-R1-Distill-Llama-8B-q4f32_1-MLC">DeepSeek R1 Llama 8B · ~5.9 GB · Thinking</option>
-                                </optgroup>
-                            </select>
-                            <small class="form-help">Reload required. Models cached after download.</small>
+                            <label for="llm-model-id">Model</label>
+                            <select id="llm-model-id" class="form-control" aria-describedby="llm-model-help"></select>
+                            <small id="llm-model-help" class="form-help">Every entry is a text-only instruction model. The size shown is the audited first download, not GPU memory.</small>
                         </div>
-
                         <div class="form-group">
-                            <label for="context-window-size">Context Window: <span title="Page reload required">⚠️</span></label>
+                            <label for="llm-reasoning-mode">Response mode</label>
+                            <select id="llm-reasoning-mode" class="form-control">
+                                <option value="direct">Direct</option>
+                                <option value="reasoning">Reasoning</option>
+                            </select>
+                            <small id="llm-reasoning-mode-help" class="form-help">The selected model determines which modes are available.</small>
+                        </div>
+                        </section>
+
+                        <section class="settings-group" aria-labelledby="settings-context-capacity-title">
+                        <h4 id="settings-context-capacity-title">Context capacity</h4>
+                        <div class="form-group">
+                            <label for="context-window-size">Context window</label>
                             <select id="context-window-size" class="form-control">
-                                <option value="2048" selected>2K tokens</option>
-                                <option value="4096">4K tokens</option>
+                                <option value="2048">2K tokens</option>
+                                <option value="4096" selected>4K tokens</option>
                                 <option value="8192">8K tokens</option>
                                 <option value="16384">16K tokens</option>
                                 <option value="32768">32K tokens</option>
                             </select>
+                            <small class="form-help">Sizes above the selected model's own limit are hidden. Larger windows allocate a larger KV cache, so they cost extra VRAM on top of the model size.</small>
                         </div>
+                        </section>
 
-                        <div id="legacy-generation-controls" style="display:none;">
-                        <h4>Generation</h4>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="temperature">Temperature:</label>
-                                <input type="range" id="temperature" min="0" max="1.5" step="0.1" value="0.5">
-                                <span class="range-value">0.5</span>
-                            </div>
-                            <div class="form-group">
-                                <label for="max-tokens">Max Tokens:</label>
-                                <input type="number" id="max-tokens" value="768" min="100" max="32768" step="128">
-                            </div>
-                        </div>
-
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="top-p">Top P:</label>
-                                <input type="range" id="top-p" min="0.5" max="1" step="0.05" value="0.9">
-                                <span class="range-value">0.9</span>
-                            </div>
-                            <div class="form-group">
-                                <label for="repeat-penalty">Repeat Penalty:</label>
-                                <input type="range" id="repeat-penalty" min="1" max="1.5" step="0.05" value="1.15">
-                                <span class="range-value">1.15</span>
-                            </div>
-                        </div>
-                        </div>
-
-                        <div id="storage-cache-section">
-                        <h4>Storage & Cache</h4>
-                        <div class="form-group">
-                            <div id="storage-info" class="storage-panel" style="display: none;">
-                                <div class="storage-bar-container">
-                                    <div class="storage-bar">
-                                        <div id="storage-bar-fill" class="storage-bar-fill"></div>
-                                    </div>
-                                    <div class="storage-bar-labels">
-                                        <span id="storage-used-label">0 GB used</span>
-                                        <span id="storage-available-label">0 GB available</span>
-                                    </div>
-                                </div>
-                                <div id="storage-details" class="storage-details"></div>
-                            </div>
-                            <div class="storage-actions">
-                                <button type="button" id="check-storage-btn" class="btn btn-secondary">
-                                    <i class="fas fa-database"></i> Check Storage
-                                </button>
-                                <button type="button" id="clear-model-cache-btn" class="btn btn-danger">
-                                    <i class="fas fa-trash-alt"></i> Reset and clear all data
-                                </button>
-                            </div>
-                            <small class="form-help" style="margin-top: 0.5rem; display: block;">Clears all stored data, models, and settings. The page will reload fresh.</small>
-                        </div>
-                        </div>
+                        <section id="settings-model-setup-group" class="settings-group" aria-labelledby="settings-model-setup-title">
+                            <h4 id="settings-model-setup-title">Model setup</h4>
+                            <p>Review how Vectoria downloads and loads its local models.</p>
+                            <button type="button" id="settings-open-model-setup" class="btn btn-secondary">
+                                <i class="fas fa-circle-info" aria-hidden="true"></i> View model setup
+                            </button>
+                        </section>
                     </div>
                     
-                    <div class="settings-category" data-category="processing">
-                        <h3>Embedding Processing</h3>
+                    <div id="settings-panel-processing" class="settings-category" role="tabpanel" aria-labelledby="settings-tab-processing" tabindex="0" data-category="processing">
+                        <h3>Data preparation</h3>
                         <p class="settings-effect-note"><i class="fas fa-sync-alt"></i> Applies when a dataset is next processed.</p>
+                        <section class="settings-group" aria-labelledby="settings-embeddings-title">
+                        <h4 id="settings-embeddings-title">Embeddings</h4>
                         <div class="info-box" style="padding: 0.5rem; border-radius: 4px; margin-bottom: 0.75rem;">
                             <small><strong>multilingual-e5-small</strong> · 384D · 100+ languages</small>
                         </div>
-
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="embedding-batch-size">Batch Size:</label>
-                                <input type="number" id="embedding-batch-size" min="1" max="64" step="1" placeholder="Auto">
-                            </div>
-                            <div class="form-group">
-                                <label for="embedding-max-length">Max Tokens:</label>
-                                <input type="number" id="embedding-max-length" value="256" min="128" max="512" step="64">
-                            </div>
-                        </div>
-
                         <div class="form-group">
-                            <label for="embedding-tokens-per-batch">Token Budget (Advanced):</label>
-                            <input type="number" id="embedding-tokens-per-batch" placeholder="Auto" min="512" max="8192" step="512">
+                            <label for="embedding-max-length">Maximum input tokens</label>
+                            <input type="number" id="embedding-max-length" value="256" min="128" max="512" step="64">
                         </div>
-                    </div>
+                        <details class="settings-disclosure">
+                            <summary>Performance tuning</summary>
+                            <div class="settings-disclosure-body form-row">
+                                <div class="form-group">
+                                    <label for="embedding-batch-size">Batch size</label>
+                                    <input type="number" id="embedding-batch-size" min="1" max="64" step="1" placeholder="Auto">
+                                </div>
+                                <div class="form-group">
+                                    <label for="embedding-tokens-per-batch">Token budget</label>
+                                    <input type="number" id="embedding-tokens-per-batch" placeholder="Auto" min="512" max="8192" step="512">
+                                </div>
+                            </div>
+                        </details>
+                        </section>
 
-                    <div class="settings-category settings-category-continuation" data-category="processing">
-                        <h3>Document Chunking</h3>
+                        <section class="settings-group" aria-labelledby="settings-chunking-title">
+                        <h4 id="settings-chunking-title">Document chunking</h4>
 
                         <div class="form-group">
                             <label>
                                 <input type="checkbox" id="chunking-enabled" checked>
-                                Enable Document Chunking
+                                Enable document chunking
                             </label>
                             <small class="form-help">Splits documents into smaller pieces for precise RAG retrieval. Disable to keep documents whole (dynamic chunking at query time).</small>
                         </div>
 
                         <div class="form-group">
-                            <label for="chunking-strategy">Chunking Strategy:</label>
+                            <label for="chunking-strategy">Chunking strategy</label>
                             <select id="chunking-strategy" class="form-control">
                                 <option value="token" selected>Token · fixed size with overlap</option>
                                 <option value="recursive">Recursive · preserve paragraphs and sentences</option>
                                 <option value="sentence">Sentence-aware · configurable boundaries</option>
+                                <option value="semantic">Semantic · embedding-similarity boundaries</option>
+                                <option value="code">Code · Tree-sitter structure-aware</option>
+                                <option value="table">Table · repeat headers across row groups</option>
                                 <option value="fast">Fast/WASM · byte boundary detection</option>
                             </select>
                             <small id="chunking-strategy-help" class="form-help">Predictable character-sized chunks with configurable overlap.</small>
@@ -667,17 +794,17 @@
 
                         <div class="form-row">
                             <div class="form-group">
-                                <label for="chunk-size">Chunk Size:</label>
+                                <label for="chunk-size">Chunk size</label>
                                 <input type="number" id="chunk-size" value="512" min="256" max="1024" step="64">
                                 <small id="chunk-size-help" class="form-help">Characters per chunk (~128 tokens at 512 chars)</small>
                             </div>
                             <div class="form-group" id="chunk-overlap-group">
-                                <label for="chunk-overlap">Overlap:</label>
+                                <label for="chunk-overlap">Overlap</label>
                                 <input type="number" id="chunk-overlap" value="128" min="0" max="256" step="32">
                                 <small class="form-help">Used by Token and Sentence-aware strategies.</small>
                             </div>
                             <div class="form-group">
-                                <label for="min-chunk-size">Min Size:</label>
+                                <label for="min-chunk-size">Minimum size</label>
                                 <input type="number" id="min-chunk-size" value="50" min="20" max="200" step="10">
                             </div>
                         </div>
@@ -686,15 +813,15 @@
                             <h4>Sentence boundaries</h4>
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label for="sentence-min-sentences">Min Sentences:</label>
+                                    <label for="sentence-min-sentences">Minimum sentences</label>
                                     <input type="number" id="sentence-min-sentences" value="1" min="1" max="20" step="1">
                                 </div>
                                 <div class="form-group">
-                                    <label for="sentence-min-characters">Min Sentence Chars:</label>
+                                    <label for="sentence-min-characters">Minimum sentence characters</label>
                                     <input type="number" id="sentence-min-characters" value="12" min="1" max="500" step="1">
                                 </div>
                                 <div class="form-group">
-                                    <label for="sentence-include-delimiter">Delimiter Placement:</label>
+                                    <label for="sentence-include-delimiter">Delimiter placement</label>
                                     <select id="sentence-include-delimiter" class="form-control">
                                         <option value="prev" selected>Previous sentence</option>
                                         <option value="next">Next sentence</option>
@@ -702,16 +829,115 @@
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label for="sentence-delimiters">Delimiters (one per line):</label>
+                                <label for="sentence-delimiters">Delimiters (one per line)</label>
                                 <textarea id="sentence-delimiters" rows="4" class="form-control" placeholder=".&#10;!&#10;?&#10;\n"></textarea>
                                 <small class="form-help">Use <code>\n</code> for a line break. Trailing spaces are preserved.</small>
                             </div>
                         </div>
 
+                        <div id="chunking-semantic-options" class="chunking-strategy-options" style="display:none;">
+                            <h4>Semantic boundaries</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="semantic-threshold">Similarity threshold</label>
+                                    <input type="number" id="semantic-threshold" value="0.8" min="0.05" max="0.95" step="0.05">
+                                    <small class="form-help">Similarity valleys below this value become candidate topic splits.</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="semantic-similarity-window">Sentence window</label>
+                                    <input type="number" id="semantic-similarity-window" value="3" min="1" max="20" step="1">
+                                    <small class="form-help">Sentences compared together on each side of a boundary.</small>
+                                </div>
+                            </div>
+                            <details class="settings-disclosure">
+                                <summary>Semantic smoothing</summary>
+                                <div class="settings-disclosure-body">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label for="semantic-filter-window">Filter window</label>
+                                            <input type="number" id="semantic-filter-window" value="5" min="3" max="99" step="2">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="semantic-filter-polyorder">Polynomial order</label>
+                                            <input type="number" id="semantic-filter-polyorder" value="3" min="1" max="20" step="1">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="semantic-filter-tolerance">Filter tolerance</label>
+                                            <input type="number" id="semantic-filter-tolerance" value="0.2" min="0.01" max="0.99" step="0.01">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="semantic-skip-window">Merge look-ahead</label>
+                                            <input type="number" id="semantic-skip-window" value="0" min="0" max="20" step="1">
+                                        </div>
+                                    </div>
+                                </div>
+                            </details>
+                            <small class="form-help">Uses the selected local embedding model during processing. Sentence-boundary controls above also apply.</small>
+                        </div>
+
+                        <div id="chunking-code-options" class="chunking-strategy-options" style="display:none;">
+                            <h4>Code structure</h4>
+                            <div class="form-group">
+                                <label for="code-language">Programming language</label>
+                                <select id="code-language" class="form-control">
+                                    <option value="auto" selected>Auto-detect from metadata, file extension, fence, or content</option>
+                                    <option value="bash">Bash</option>
+                                    <option value="c">C</option>
+                                    <option value="cpp">C++</option>
+                                    <option value="c_sharp">C#</option>
+                                    <option value="css">CSS</option>
+                                    <option value="dart">Dart</option>
+                                    <option value="elixir">Elixir</option>
+                                    <option value="elm">Elm</option>
+                                    <option value="go">Go</option>
+                                    <option value="html">HTML</option>
+                                    <option value="java">Java</option>
+                                    <option value="javascript">JavaScript</option>
+                                    <option value="json">JSON</option>
+                                    <option value="kotlin">Kotlin</option>
+                                    <option value="lua">Lua</option>
+                                    <option value="objc">Objective-C</option>
+                                    <option value="ocaml">OCaml</option>
+                                    <option value="php">PHP</option>
+                                    <option value="python">Python</option>
+                                    <option value="ruby">Ruby</option>
+                                    <option value="rust">Rust</option>
+                                    <option value="scala">Scala</option>
+                                    <option value="solidity">Solidity</option>
+                                    <option value="swift">Swift</option>
+                                    <option value="toml">TOML</option>
+                                    <option value="tsx">TSX</option>
+                                    <option value="typescript">TypeScript</option>
+                                    <option value="vue">Vue</option>
+                                    <option value="yaml">YAML</option>
+                                    <option value="zig">Zig</option>
+                                </select>
+                                <small class="form-help">The browser downloads Tree-sitter and the selected grammar on first use. Source code never leaves the device.</small>
+                            </div>
+                        </div>
+
+                        <div id="chunking-table-options" class="chunking-strategy-options" style="display:none;">
+                            <h4>Table rows</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="table-mode">Size table chunks by</label>
+                                    <select id="table-mode" class="form-control">
+                                        <option value="row" selected>Rows</option>
+                                        <option value="character">Characters</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" id="table-rows-per-chunk-group">
+                                    <label for="table-rows-per-chunk">Rows per chunk</label>
+                                    <input type="number" id="table-rows-per-chunk" value="10" min="1" max="1000" step="1">
+                                </div>
+                            </div>
+                            <small class="form-help">For Markdown or HTML tables. Every chunk repeats the original table header.</small>
+                        </div>
+
                         <div id="chunking-fast-options" class="chunking-strategy-options" style="display:none;">
                             <h4>Fast/WASM boundaries</h4>
                             <div class="form-group">
-                                <label for="fast-delimiters">Boundary Characters:</label>
+                                <label for="fast-delimiters">Boundary characters</label>
                                 <input type="text" id="fast-delimiters" value="\n.?" class="form-control">
                                 <small class="form-help">Use <code>\n</code> for line breaks. Chunk size is measured in UTF-8 bytes.</small>
                             </div>
@@ -727,28 +953,30 @@
                                 </div>
                             </div>
                         </div>
-                        <small class="form-help" style="display:block; margin-top: 0.5rem; color: #888;">Tip: Match chunk size to embedding max tokens. 512 chars ≈ 128 tokens fits within 256 max_length.</small>
+                        <small class="form-help" style="display:block; margin-top: 0.5rem; color: var(--text-muted);">Tip: Match chunk size to embedding max tokens. 512 chars ≈ 128 tokens fits within 256 max_length.</small>
                         <small class="form-help" style="display:block; margin-top: 0.75rem; color: var(--text-muted); font-style: italic;">Character tokenization remains local and dependency-free. Settings apply when a dataset is next processed.</small>
+                        </section>
                     </div>
 
-                    <div class="settings-category" data-category="explore">
-                        <h3>Explore &amp; Clustering</h3>
+                    <div id="settings-panel-explore" class="settings-category" role="tabpanel" aria-labelledby="settings-tab-explore" tabindex="0" data-category="explore">
+                        <h3>Projection &amp; clustering</h3>
                         <p class="settings-effect-note"><i class="fas fa-sync-alt"></i> Applies when a dataset is next processed.</p>
 
-                        <h4>UMAP</h4>
+                        <section class="settings-group" aria-labelledby="settings-projection-title">
+                        <h4 id="settings-projection-title">Projection (UMAP)</h4>
                         <div class="form-row">
                             <div class="form-group">
-                                <label for="umap-n-neighbors">N Neighbors:</label>
+                                <label for="umap-n-neighbors">Neighbors</label>
                                 <input type="number" id="umap-n-neighbors" value="15" min="5" max="50" step="1">
                             </div>
                             <div class="form-group">
-                                <label for="umap-min-dist">Min Distance:</label>
+                                <label for="umap-min-dist">Minimum distance</label>
                                 <input type="number" id="umap-min-dist" value="0" min="0" max="0.5" step="0.05">
                             </div>
                         </div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label for="umap-metric">Metric:</label>
+                                <label for="umap-metric">Projection metric</label>
                                 <select id="umap-metric" class="form-control">
                                     <option value="cosine" selected>Cosine</option>
                                     <option value="euclidean">Euclidean</option>
@@ -757,25 +985,27 @@
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label for="umap-clustering-dimensions">Clustering Dims:</label>
+                                <label for="umap-clustering-dimensions">Intermediate clustering dimensions</label>
                                 <input type="number" id="umap-clustering-dimensions" value="15" min="2" max="100" step="1">
                             </div>
                         </div>
-                        <small class="form-help" style="display: block; margin-top: -8px; margin-bottom: 16px;">Clustering Dims: Intermediate dimensions before 2D viz (default: 15)</small>
+                        <small class="form-help">Dimensions retained for clustering before the 2D projection (default: 15).</small>
+                        </section>
 
-                        <h4>HDBSCAN</h4>
+                        <section class="settings-group" aria-labelledby="settings-clustering-title">
+                        <h4 id="settings-clustering-title">Clustering (HDBSCAN)</h4>
                         <div class="form-row">
                             <div class="form-group">
-                                <label for="hdbscan-min-cluster-size">Min Cluster:</label>
+                                <label for="hdbscan-min-cluster-size">Minimum cluster size</label>
                                 <input type="number" id="hdbscan-min-cluster-size" value="5" min="3" max="50" step="1">
                             </div>
                             <div class="form-group">
-                                <label for="hdbscan-min-samples">Min Samples:</label>
+                                <label for="hdbscan-min-samples">Minimum samples</label>
                                 <input type="number" id="hdbscan-min-samples" value="5" min="1" max="50" step="1">
                             </div>
                         </div>
                         <div class="form-group">
-                            <label for="hdbscan-metric">Metric:</label>
+                            <label for="hdbscan-metric">Clustering metric</label>
                             <select id="hdbscan-metric" class="form-control">
                                 <option value="euclidean" selected>Euclidean</option>
                                 <option value="manhattan">Manhattan</option>
@@ -783,178 +1013,332 @@
                                 <option value="minkowski">Minkowski</option>
                             </select>
                         </div>
+                        </section>
                     </div>
 
-                    <div class="settings-category" data-category="rag">
-                        <h3>Search &amp; RAG</h3>
+                    <div id="settings-panel-rag" class="settings-category" role="tabpanel" aria-labelledby="settings-tab-rag" tabindex="0" data-category="rag">
+                        <h3>Search &amp; answers</h3>
                         <p class="settings-effect-note"><i class="fas fa-bolt"></i> Retrieval and generation changes apply to the next query.</p>
-                        <div id="advanced-rag-settings-host"></div>
+                        <div id="advanced-rag-settings-host" class="advanced-rag-settings-body">
+                            <section class="settings-group" aria-labelledby="settings-retrieval-title">
+                                <h4 id="settings-retrieval-title">Retrieval</h4>
+                                <label class="rag-toggle-label rag-settings-toggle">
+                                    <input type="checkbox" id="hyde-mode-toggle" class="rag-toggle-input">
+                                    <span class="rag-toggle-slider"></span>
+                                    <span class="rag-toggle-text">
+                                        <span class="rag-toggle-title"><i class="fas fa-lightbulb" aria-hidden="true"></i><span>HyDE retrieval</span></span>
+                                        <small>Generate and review a hypothetical passage before semantic search.</small>
+                                    </span>
+                                </label>
+                                <label class="rag-toggle-label rag-settings-toggle">
+                                    <input type="checkbox" id="highlight-results" class="rag-toggle-input" checked>
+                                    <span class="rag-toggle-slider"></span>
+                                    <span class="rag-toggle-text">
+                                        <span class="rag-toggle-title"><i class="fas fa-highlighter" aria-hidden="true"></i><span>Highlight search results</span></span>
+                                        <small>Emphasize matching documents on the map after a search.</small>
+                                    </span>
+                                </label>
+                                <div class="reranker-recommendation" role="note">
+                                    <div class="reranker-recommendation-copy">
+                                        <strong><i class="fas fa-ranking-star" aria-hidden="true"></i> Recommended quality</strong>
+                                        <span>Multilingual E5-small + BM25 + multilingual MiniLM reranker</span>
+                                        <small>Improves final search and evidence ordering. Adds approximately 140 MB and some search latency. Disabled until you enable it.</small>
+                                    </div>
+                                    <label class="rag-toggle-label rag-settings-toggle reranker-toggle">
+                                        <input type="checkbox" id="reranker-enabled" class="rag-toggle-input">
+                                        <span class="rag-toggle-slider"></span>
+                                        <span class="rag-toggle-text"><span class="rag-toggle-title"><span>Enable reranker</span></span><small>Advanced · downloaded only when first used</small></span>
+                                    </label>
+                                </div>
+                                <div class="setting-row">
+                                    <label for="quick-retrieval-k">
+                                        <span><i class="fas fa-layer-group" aria-hidden="true"></i> Retrieval depth</span>
+                                        <span class="setting-value" id="quick-retrieval-k-value">60</span>
+                                    </label>
+                                    <input type="range" id="quick-retrieval-k" min="10" max="200" step="5" value="60" class="slider">
+                                    <small class="form-help">Chunks gathered before ranking. Higher values search more deeply but take longer.</small>
+                                </div>
+                                <div class="setting-row">
+                                    <label for="quick-vector-weight">
+                                        <span><i class="fas fa-balance-scale" aria-hidden="true"></i> Vector / BM25 weighting</span>
+                                        <span class="setting-value" id="quick-weight-value">60 / 40</span>
+                                    </label>
+                                    <input type="range" id="quick-vector-weight" min="0" max="100" step="5" value="60" class="slider">
+                                    <small class="form-help">Balance semantic similarity against exact keyword matching.</small>
+                                </div>
+                            </section>
+
+                            <section class="settings-group" aria-labelledby="settings-generation-title">
+                                <h4 id="settings-generation-title">Answer generation</h4>
+                                <div class="setting-row">
+                                    <label for="quick-temperature">
+                                        <span><i class="fas fa-thermometer-half" aria-hidden="true"></i> Temperature</span>
+                                        <span class="setting-value" id="quick-temperature-value">0.5</span>
+                                    </label>
+                                    <input type="range" id="quick-temperature" min="0" max="1.5" step="0.1" value="0.5" class="slider">
+                                    <small class="form-help">Lower values are more focused; higher values are more varied.</small>
+                                </div>
+                                <div class="setting-row">
+                                    <label for="quick-max-tokens">
+                                        <span><i class="fas fa-font" aria-hidden="true"></i> Maximum answer tokens</span>
+                                        <span class="setting-value" id="quick-max-tokens-value">768</span>
+                                    </label>
+                                    <input type="range" id="quick-max-tokens" min="128" max="8192" step="128" value="768" class="slider">
+                                    <small class="form-help">Reasoning models may reserve additional tokens for internal reasoning.</small>
+                                </div>
+                            </section>
+
+                            <details class="settings-disclosure">
+                                <summary>Advanced sampling</summary>
+                                <div class="settings-disclosure-body form-row">
+                                    <div class="setting-row">
+                                        <label for="quick-top-p"><span>Top P</span><span class="setting-value" id="quick-top-p-value">0.8</span></label>
+                                        <input type="range" id="quick-top-p" min="0.1" max="1.0" step="0.05" value="0.8" class="slider">
+                                        <small class="form-help">Lower values restrict generation to more likely tokens.</small>
+                                    </div>
+                                    <div class="setting-row">
+                                        <label for="quick-repeat-penalty"><span>Repeat penalty</span><span class="setting-value" id="quick-repeat-penalty-value">1.1</span></label>
+                                        <input type="range" id="quick-repeat-penalty" min="1.0" max="2.0" step="0.05" value="1.1" class="slider">
+                                        <small class="form-help">Higher values discourage repeated text.</small>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="settings-disclosure">
+                                <summary>Prompt templates</summary>
+                                <div class="settings-disclosure-body">
+                                    <div class="setting-row">
+                                        <label for="quick-system-prompt"><span><i class="fas fa-comment-dots" aria-hidden="true"></i> System prompt</span></label>
+                                        <textarea id="quick-system-prompt" class="form-control prompt-textarea" rows="4" placeholder="You are Vectoria, a careful document-research assistant that answers the user's questions about their data.&#10;Use retrieved Documents for dataset facts and cite every dataset claim with [Doc N]."></textarea>
+                                        <small id="think-mode-hint" class="form-help" hidden>This model uses reasoning/thinking. Add <code>/nothink</code> to the system prompt to disable it.</small>
+                                    </div>
+                                    <div class="setting-row">
+                                        <label for="quick-user-template"><span><i class="fas fa-file-alt" aria-hidden="true"></i> User template</span></label>
+                                        <textarea id="quick-user-template" class="form-control prompt-textarea" rows="4" placeholder="Question: {question}&#10;&#10;Documents:&#10;{context}"></textarea>
+                                        <small class="form-help">Use <code>{question}</code> and <code>{context}</code> as placeholders.</small>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details id="hyde-configuration-disclosure" class="settings-disclosure">
+                                <summary>HyDE configuration</summary>
+                                <div class="settings-disclosure-body">
+                                    <div class="form-row">
+                                        <div class="setting-row">
+                                            <label for="hyde-temperature"><span>Temperature</span><span class="setting-value" id="hyde-temperature-value">0.2</span></label>
+                                            <input type="range" id="hyde-temperature" min="0" max="1.5" step="0.1" value="0.2" class="slider">
+                                        </div>
+                                        <div class="setting-row">
+                                            <label for="hyde-max-tokens"><span>Maximum tokens</span><span class="setting-value" id="hyde-max-tokens-value">256</span></label>
+                                            <input type="range" id="hyde-max-tokens" min="64" max="1024" step="64" value="256" class="slider">
+                                        </div>
+                                    </div>
+                                    <div class="setting-row">
+                                        <label for="hyde-prompt"><span><i class="fas fa-magic" aria-hidden="true"></i> HyDE prompt</span></label>
+                                        <textarea id="hyde-prompt" class="form-control prompt-textarea" rows="4" placeholder="Write a detailed hypothetical passage that directly answers the user's question..."></textarea>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <div class="quick-settings-actions settings-section-actions">
+                                <button type="button" id="reset-quick-settings" class="btn btn-secondary btn-sm">
+                                    <i class="fas fa-undo" aria-hidden="true"></i> Reset Search &amp; answers
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     
-                    <div class="settings-category" data-category="mcp">
-                        <h3>MCP &amp; Integrations</h3>
-                        <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.25rem;">
+                    <div id="settings-panel-mcp" class="settings-category" role="tabpanel" aria-labelledby="settings-tab-mcp" tabindex="0" data-category="mcp">
+                        <h3>MCP integration</h3>
+                        <p class="settings-category-intro">
                             Expose Vectoria's search, RAG, clusters, and visualization as tools to Claude Desktop, OpenCode, Cursor, Zed, Continue.dev, and any other MCP-compatible AI assistant.
                         </p>
 
-                        <!-- STATUS PILL -->
-                        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;">
-                            <span id="mcp-bridge-status" style="font-size: 0.78rem; font-weight: 600; padding: 3px 12px; border-radius: 12px; background: var(--bg-tertiary); color: var(--text-secondary);">Not installed</span>
-                            <span id="mcp-relay-info" style="font-size: 0.78rem; color: var(--text-muted); display: none;">ws://127.0.0.1:3700</span>
+                        <div class="integration-status-row">
+                            <span id="mcp-bridge-status" class="integration-status-pill">Not installed</span>
+                            <span id="mcp-relay-info" class="integration-relay-info" hidden>ws://127.0.0.1:3700</span>
                         </div>
-                        <p id="mcp-relay-status-help" style="display: none; color: var(--text-muted); font-size: 0.78rem; line-height: 1.5; margin: -0.75rem 0 1.25rem;"></p>
+                        <p id="mcp-relay-status-help" class="integration-status-help" hidden></p>
 
-                        <!-- LLM UNLOAD TOGGLE (shown whenever MCP is enabled) -->
-                        <div id="mcp-llm-toggle-row" style="display: none; background: var(--bg-secondary); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.25rem;">
-                            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; margin-bottom: 0.4rem;">
-                                <input type="checkbox" id="mcp-llm-unloaded" style="width: 17px; height: 17px; cursor: pointer; accent-color: var(--accent-color);">
-                                <span style="font-size: 0.88rem; font-weight: 500;">Use AI client as RAG engine (unload local LLM)</span>
+                        <fieldset id="mcp-llm-toggle-row" class="settings-group integration-choice-group">
+                            <legend>Answer location</legend>
+                            <label class="integration-choice">
+                                <input type="radio" name="vectoria-generation-mode" id="generation-mode-local" value="local">
+                                <span><strong>Local browser model</strong><small>Private and on-device. Uses local GPU/RAM for answers and cluster labels.</small></span>
                             </label>
-                            <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0; padding-left: 1.75rem; line-height: 1.5;">
-                                Frees GPU/RAM by terminating the local LLM worker. The <code style="font-size: 0.75rem;">query_rag_external</code> tool retrieves context and lets your AI client answer instead — no local model needed. Search and all other tools are unaffected.
-                            </p>
-                        </div>
+                            <label class="integration-choice">
+                                <input type="radio" name="vectoria-generation-mode" id="generation-mode-external" value="external">
+                                <span><strong>AI client via MCP</strong><small>Frees GPU/RAM. Ask and receive answers in your AI client's chat using Vectoria tools. Only retrieved excerpts or cluster exemplars are returned to that client/provider.</small></span>
+                            </label>
+                            <p id="generation-mode-status" class="form-help"></p>
+                        </fieldset>
 
                         <!-- STEP 1: NOT INSTALLED -->
-                        <div id="mcp-step-install">
-                            <div style="background: var(--bg-secondary); border-radius: 10px; padding: 1.25rem; margin-bottom: 1rem;">
-                                <h4 style="font-size: 0.9rem; margin: 0 0 0.5rem 0;">Quick Install</h4>
-                                <p id="mcp-install-help" style="font-size: 0.82rem; color: var(--text-secondary); margin: 0 0 0.75rem 0;">Run this command in your terminal. It installs the MCP server locally and auto-configures all detected AI clients.</p>
-                                <div style="position: relative;">
-                                    <pre id="mcp-install-cmd" style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 7px; padding: 0.65rem 2.5rem 0.65rem 0.85rem; font-size: 0.78rem; margin: 0; white-space: pre-wrap; word-break: break-all; color: var(--text-primary);"></pre>
-                                    <button id="mcp-copy-install" title="Copy" style="position: absolute; top: 6px; right: 6px; background: none; border: none; cursor: pointer; color: var(--text-secondary); padding: 2px 5px; border-radius: 4px;" onclick="navigator.clipboard.writeText(document.getElementById('mcp-install-cmd').textContent).then(()=>{ this.textContent='✓'; setTimeout(()=>this.textContent='⧉',1500); })">⧉</button>
+                        <section id="mcp-step-install" class="settings-group" aria-labelledby="mcp-setup-title">
+                            <h4 id="mcp-setup-title">Setup</h4>
+                            <div class="integration-instruction-block">
+                                <p id="mcp-install-help">Run this command in your terminal. It installs the MCP server locally and auto-configures all detected AI clients.</p>
+                                <div class="integration-command">
+                                    <pre id="mcp-install-cmd"></pre>
+                                    <button id="mcp-copy-install" type="button" title="Copy install command" aria-label="Copy install command" onclick="navigator.clipboard.writeText(document.getElementById('mcp-install-cmd').textContent).then(()=>{ this.textContent='✓'; setTimeout(()=>this.textContent='⧉',1500); })">⧉</button>
                                 </div>
-                                <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0.5rem 0 0 0;">Requires Node.js v18+. <a href="https://nodejs.org" target="_blank" rel="noopener" style="color: var(--accent-color);">Download Node.js</a></p>
+                                <p class="form-help">Requires Node.js v18+. <a href="https://nodejs.org" target="_blank" rel="noopener">Download Node.js</a></p>
                             </div>
 
-                            <div style="background: var(--bg-secondary); border-radius: 10px; padding: 1.25rem; margin-bottom: 1rem;">
-                                <h4 style="font-size: 0.9rem; margin: 0 0 0.75rem 0;">After installing</h4>
-                                <ol style="font-size: 0.82rem; color: var(--text-secondary); margin: 0; padding-left: 1.2rem; line-height: 1.8;">
+                            <div class="integration-instruction-block">
+                                <h4>After installing</h4>
+                                <ol class="integration-steps">
                                     <li>Restart your AI client(s)</li>
                                     <li>Come back here and enable the bridge below</li>
                                     <li>Status will turn green when connected</li>
                                 </ol>
                             </div>
 
-                            <div class="form-group" style="margin-bottom: 0;">
-                                <label class="toggle-label" style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
-                                    <input type="checkbox" id="mcp-bridge-enabled" style="width: 18px; height: 18px; cursor: pointer;">
-                                    <span style="font-size: 0.88rem;">Enable MCP Bridge (after installing)</span>
+                            <div class="form-group">
+                                <label class="toggle-label">
+                                    <input type="checkbox" id="mcp-bridge-enabled">
+                                    <span>Enable MCP Bridge after installing</span>
                                 </label>
                                 <p class="help-text">Opens the WebSocket relay so your AI client can reach Vectoria.</p>
                             </div>
-                        </div>
+                        </section>
 
                         <!-- STEP 2: ENABLED / CONNECTED -->
                         <div id="mcp-step-connected" style="display: none;">
                             <!-- Active connections -->
-                            <div id="mcp-connections-box" style="display: none; background: var(--bg-secondary); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1rem;">
-                                <h4 style="font-size: 0.85rem; margin: 0 0 0.6rem 0; color: var(--text-secondary);">Active connections</h4>
-                                <div id="mcp-connections-list" style="display: flex; flex-direction: column; gap: 0.35rem;"></div>
-                            </div>
+                            <section id="mcp-connections-box" class="settings-group" style="display: none;" aria-labelledby="mcp-connections-title">
+                                <h4 id="mcp-connections-title">Connections</h4>
+                                <div id="mcp-connections-list" class="integration-connections-list"></div>
+                            </section>
 
-                            <div style="background: var(--bg-secondary); border-radius: 10px; padding: 1.25rem; margin-bottom: 1rem;">
-                                <h4 style="font-size: 0.9rem; margin: 0 0 0.5rem 0;">16 tools available</h4>
-                                <div style="font-size: 0.78rem; color: var(--text-secondary); display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 1rem; margin-top: 0.5rem;">
-                                    <span>• search &amp; hybrid_search</span><span>• query_rag_external ✦</span>
-                                    <span>• get_document</span><span>• query_rag_local</span>
-                                    <span>• get_documents_by_cluster</span><span>• get_visualization_data</span>
-                                    <span>• get_cluster_summary</span><span>• get_dataset_stats</span>
-                                    <span>• get_point_neighbors</span><span>• get_metadata_schema</span>
-                                    <span>• set/clear_metadata_filters</span><span>• get_config / set_config</span>
-                                    <span>• list_datasets</span><span>• get_dataset_info</span>
+                            <section class="settings-group" aria-labelledby="mcp-bridge-title">
+                                <h4 id="mcp-bridge-title">MCP Bridge</h4>
+                                <div class="form-group">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" id="mcp-bridge-enabled-connected" checked>
+                                        <span>MCP Bridge enabled</span>
+                                    </label>
                                 </div>
-                                <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0.6rem 0 0 0;">✦ <em>query_rag_external</em> retrieves context and lets your AI client answer — no local LLM needed.</p>
-                            </div>
+                            </section>
 
-                            <div class="form-group">
-                                <label class="toggle-label" style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
-                                    <input type="checkbox" id="mcp-bridge-enabled-connected" checked style="width: 18px; height: 18px; cursor: pointer;">
-                                    <span style="font-size: 0.88rem;">MCP Bridge enabled</span>
-                                </label>
-                            </div>
-
-                            <div style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 0.5rem;">
-                                <h4 style="font-size: 0.85rem; color: var(--text-secondary); margin: 0 0 0.5rem 0;">Uninstall</h4>
-                                <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0 0 0.5rem 0;">Run this in your terminal to remove the MCP server and clean up all AI client config entries:</p>
-                                <div style="position: relative;">
-                                    <pre id="mcp-uninstall-cmd" style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 7px; padding: 0.65rem 2.5rem 0.65rem 0.85rem; font-size: 0.75rem; margin: 0; white-space: pre-wrap; word-break: break-all; color: var(--text-primary);"></pre>
-                                    <button title="Copy" style="position: absolute; top: 6px; right: 6px; background: none; border: none; cursor: pointer; color: var(--text-secondary); padding: 2px 5px; border-radius: 4px;" onclick="navigator.clipboard.writeText(document.getElementById('mcp-uninstall-cmd').textContent).then(()=>{ this.textContent='✓'; setTimeout(()=>this.textContent='⧉',1500); })">⧉</button>
+                            <details class="settings-disclosure">
+                                <summary>Available tools (16)</summary>
+                                <div class="settings-disclosure-body">
+                                    <div class="integration-tools-grid">
+                                        <span>• search &amp; hybrid_search</span><span>• query_rag_external ✦</span>
+                                        <span>• get_document</span><span>• query_rag_local</span>
+                                        <span>• get_documents_by_cluster</span><span>• get_visualization_data</span>
+                                        <span>• get_cluster_summary</span><span>• get_dataset_stats</span>
+                                        <span>• get_point_neighbors</span><span>• get_metadata_schema</span>
+                                        <span>• set/clear_metadata_filters</span><span>• get_config / set_config</span>
+                                        <span>• list_datasets</span><span>• get_dataset_info</span>
+                                    </div>
+                                    <p class="form-help">✦ <em>query_rag_external</em> retrieves context and lets your AI client answer without a local LLM.</p>
                                 </div>
-                            </div>
+                            </details>
+
+                            <details class="settings-disclosure">
+                                <summary>Maintenance</summary>
+                                <div class="settings-disclosure-body">
+                                    <p>Run this in your terminal to remove the MCP server and clean up all AI client configuration entries.</p>
+                                    <div class="integration-command">
+                                        <pre id="mcp-uninstall-cmd"></pre>
+                                        <button type="button" title="Copy uninstall command" aria-label="Copy uninstall command" onclick="navigator.clipboard.writeText(document.getElementById('mcp-uninstall-cmd').textContent).then(()=>{ this.textContent='✓'; setTimeout(()=>this.textContent='⧉',1500); })">⧉</button>
+                                    </div>
+                                </div>
+                            </details>
                         </div>
                     </div>
 
-                    <div class="settings-category active" data-category="storage">
-                        <h3>Storage &amp; App</h3>
-                        <div id="advanced-storage-settings-host"></div>
+                    <div id="settings-panel-storage" class="settings-category active" role="tabpanel" aria-labelledby="settings-tab-storage" tabindex="0" data-category="storage">
+                        <h3>General</h3>
 
-                        <div class="form-group" style="margin-bottom: 1.25rem;">
-                            <label style="display: flex; align-items: center; justify-content: space-between;">
-                                <span>Dark Mode</span>
-                                <button id="theme-toggle" type="button" class="theme-toggle-btn" aria-label="Toggle dark mode">
-                                    <i class="fas fa-moon"></i>
+                        <section class="settings-group" aria-labelledby="settings-appearance-title">
+                            <h4 id="settings-appearance-title">Appearance</h4>
+                            <div class="form-group settings-toggle-row">
+                                <button id="theme-toggle" type="button" class="theme-toggle-setting-btn" aria-label="Switch to dark mode">
+                                    <span class="theme-toggle-action">
+                                        <i class="fas fa-moon" aria-hidden="true"></i>
+                                        <span id="theme-toggle-label">Dark mode</span>
+                                    </span>
+                                    <span class="theme-toggle-track" aria-hidden="true">
+                                        <span class="theme-toggle-thumb"></span>
+                                    </span>
                                 </button>
+                            </div>
+                            <label class="rag-toggle-label rag-settings-toggle">
+                                <input type="checkbox" id="hover-metadata-enabled" class="rag-toggle-input" checked>
+                                <span class="rag-toggle-slider"></span>
+                                <span class="rag-toggle-text">
+                                    <span class="rag-toggle-title"><i class="fas fa-tags" aria-hidden="true"></i><span>Metadata on hover</span></span>
+                                    <small>Show prioritized metadata fields in the map tooltip. Turn off for a cleaner hover card.</small>
+                                </span>
                             </label>
-                        </div>
+                        </section>
 
-                        <p style="color: var(--text-secondary); margin-bottom: 1rem; line-height: 1.6;">
-                            A fully browser-native semantic search and RAG system. All processing happens locally in your browser - your data never leaves your device.
-                        </p>
+                        <section id="storage-cache-section" class="settings-group" aria-labelledby="settings-storage-title">
+                            <h4 id="settings-storage-title">Browser storage</h4>
+                            <p class="form-help storage-intro">Estimated storage used by <strong>vectoria.app</strong> in this browser profile. This is not your computer's total disk usage.</p>
+                            <div id="storage-info" class="storage-panel" hidden>
+                                <div class="storage-summary">
+                                    <span>Vectoria site data</span>
+                                    <strong id="storage-used-label">0 B used</strong>
+                                </div>
+                                <div class="storage-bar-container">
+                                    <div class="storage-bar"><div id="storage-bar-fill" class="storage-bar-fill"></div></div>
+                                    <div class="storage-bar-labels">
+                                        <span id="storage-percent-label">0% of current browser quota</span>
+                                        <span id="storage-available-label">0 B estimated remaining</span>
+                                    </div>
+                                </div>
+                                <div id="storage-details" class="storage-details"></div>
+                            </div>
+                            <button type="button" id="check-storage-btn" class="btn btn-secondary">
+                                <i class="fas fa-database" aria-hidden="true"></i> Check browser storage
+                            </button>
+                        </section>
 
-                        <h4>Core Technologies</h4>
-                        <div class="about-tech-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 1rem;">
-                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
-                                <small><strong>WebLLM</strong> - LLM inference</small>
+                        <section class="settings-group settings-reset-group" aria-labelledby="settings-reset-title">
+                            <h4 id="settings-reset-title">Reset</h4>
+                            <div class="settings-reset-option">
+                                <div><strong>Reset settings</strong><small>Restore model, data preparation, search, prompt, and clustering defaults. Your datasets and downloaded models remain.</small></div>
+                                <button id="reset-settings-btn" type="button" class="btn btn-secondary">Reset settings</button>
                             </div>
-                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
-                                <small><strong>Transformers.js</strong> - Embeddings</small>
+                            <div class="settings-reset-option">
+                                <div><strong>Clear all Vectoria data</strong><small>Remove datasets, conversations, cached models, settings, and browser-local files.</small></div>
+                                <button type="button" id="clear-model-cache-btn" class="btn btn-danger">
+                                    <i class="fas fa-trash-alt" aria-hidden="true"></i> Clear all data
+                                </button>
                             </div>
-                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
-                                <small><strong>ONNX Runtime</strong> - ML runtime</small>
-                            </div>
-                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
-                                <small><strong>WebGPU</strong> - GPU acceleration</small>
-                            </div>
-                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
-                                <small><strong>UMAP WASM</strong> - Dimensionality reduction</small>
-                            </div>
-                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
-                                <small><strong>HDBSCAN</strong> - Clustering</small>
-                            </div>
-                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
-                                <small><strong>BM25</strong> - Keyword search</small>
-                            </div>
-                            <div class="info-box" style="padding: 0.5rem 0.75rem; border-radius: 4px;">
-                                <small><strong>IndexedDB</strong> - Local storage</small>
-                            </div>
-                        </div>
+                        </section>
 
-                        <div class="info-box" style="padding: 0.75rem; border-radius: 4px; text-align: center;">
-                            <small style="color: var(--text-muted);">
-                                No telemetry · No tracking · Models cached locally
-                            </small>
-                        </div>
-
-                        <div style="text-align: center; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
-                            <p style="margin: 0 0 0.5rem 0; color: var(--text-secondary); font-size: 0.9rem;">
-                                Created by <strong>Armin Pasalic</strong>
-                            </p>
-                            <div style="display: flex; justify-content: center; gap: 1rem;">
-                                <a href="https://arminpasalic.com" target="_blank" rel="noopener noreferrer" style="color: var(--accent-neutral); text-decoration: none; font-size: 0.85rem;">
-                                    arminpasalic.com
-                                </a>
-                                <a href="https://github.com/arminpasalic/vectoria" target="_blank" rel="noopener noreferrer" style="color: var(--accent-neutral); text-decoration: none; font-size: 0.85rem;">
-                                    GitHub
-                                </a>
+                        <details class="settings-disclosure settings-about">
+                            <summary>About Vectoria</summary>
+                            <div class="settings-disclosure-body">
+                                <p>A browser-native semantic search and document-answer system. Processing stays local by default. In AI client mode via MCP, only retrieved excerpts or cluster examples are shared with your selected provider.</p>
+                                <div class="about-tech-grid">
+                                    <div class="info-box"><small><strong>WebLLM</strong> — LLM inference</small></div>
+                                    <div class="info-box"><small><strong>Transformers.js</strong> — Embeddings</small></div>
+                                    <div class="info-box"><small><strong>ONNX Runtime</strong> — ML runtime</small></div>
+                                    <div class="info-box"><small><strong>WebGPU</strong> — GPU acceleration</small></div>
+                                    <div class="info-box"><small><strong>UMAP WASM</strong> — Dimensionality reduction</small></div>
+                                    <div class="info-box"><small><strong>HDBSCAN</strong> — Clustering</small></div>
+                                    <div class="info-box"><small><strong>BM25</strong> — Keyword search</small></div>
+                                    <div class="info-box"><small><strong>IndexedDB</strong> — Local storage</small></div>
+                                </div>
+                                <p class="advanced-privacy-note">No telemetry · No tracking · Models cached locally</p>
+                                <div class="settings-about-links">
+                                    <span>Created by <strong>Armin Pasalic</strong></span>
+                                    <a href="https://arminpasalic.com" target="_blank" rel="noopener noreferrer">arminpasalic.com</a>
+                                    <a href="https://github.com/arminpasalic/vectoria" target="_blank" rel="noopener noreferrer">GitHub</a>
+                                </div>
                             </div>
-                        </div>
+                        </details>
+                    </div>
                     </div>
 
                     <div class="settings-actions">
-                        <span class="settings-autosave-label"><i class="fas fa-check-circle"></i> Settings save automatically</span>
-                        <button id="save-settings-btn" class="btn btn-primary" style="display:none;">Save</button>
-                        <button id="reset-settings-btn" class="btn btn-secondary">Reset all settings to default</button>
+                        <span class="settings-autosave-label"><i class="fas fa-check-circle" aria-hidden="true"></i> Settings save automatically</span>
                     </div>
                 </div>
             </div>
@@ -968,168 +1352,18 @@
 
     </main>
 
-    <div id="quick-settings-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-content" style="max-width: 580px; width: 90%; max-height: 90vh; overflow-y: auto;">
+   <div id="hyde-review-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="hyde-review-title" aria-describedby="hyde-review-description" style="display: none;">
+        <div class="modal-content hyde-review-content" tabindex="-1">
             <div class="quick-settings-header">
-                <h3><i class="fas fa-sliders-h"></i> RAG Search Settings</h3>
-                <button type="button" id="close-quick-settings" class="btn-icon" title="Close">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-
-            <div class="qs-tabs">
-                <button type="button" class="settings-tab active" data-tab="rag-tab">
-                    <i class="fas fa-robot"></i> RAG
-                </button>
-                <button type="button" class="settings-tab" data-tab="hyde-tab">
-                    <i class="fas fa-lightbulb"></i> HyDE
-                </button>
-            </div>
-
-            <div class="quick-settings-body">
-                <div id="rag-tab" class="settings-tab-content">
-
-                    <!-- HyDE Toggle -->
-                    <div class="setting-row" style="flex-direction: row; align-items: center; justify-content: space-between;">
-                        <label class="rag-toggle-label rag-settings-toggle" style="flex: 1; margin: 0;">
-                            <input type="checkbox" id="hyde-mode-toggle" class="rag-toggle-input">
-                            <span class="rag-toggle-slider"></span>
-                            <span class="rag-toggle-text">
-                                <i class="fas fa-lightbulb"></i> HyDE Mode
-                                <small>Hypothetical answer before search</small>
-                            </span>
-                        </label>
-                        <span class="setting-help" title="Generates a hypothetical answer first, then searches using that answer instead of the raw query. Finds documents even when your wording differs from the source.">?</span>
-                    </div>
-
-                    <!-- Retrieval section -->
-                    <div class="qs-section-label">Retrieval</div>
-
-                    <div class="setting-row">
-                        <label for="quick-retrieval-k">
-                            <span><i class="fas fa-layer-group"></i> Depth (K)</span>
-                            <span class="qs-right"><span class="setting-value" id="quick-retrieval-k-value">60</span><span class="setting-help" title="How many chunks to gather before ranking. Higher = deeper but slower. Scoped to your active filters/lasso.">?</span></span>
-                        </label>
-                        <input type="range" id="quick-retrieval-k" min="10" max="200" step="5" value="60" class="slider">
-                    </div>
-
-                    <div class="setting-row">
-                        <label for="quick-vector-weight">
-                            <span><i class="fas fa-balance-scale"></i> Vector / BM25</span>
-                            <span class="qs-right"><span class="setting-value" id="quick-weight-value">60 / 40</span><span class="setting-help" title="Balance between semantic (vector) and keyword (BM25) search. 100/0 = pure semantic, 0/100 = pure keyword.">?</span></span>
-                        </label>
-                        <input type="range" id="quick-vector-weight" min="0" max="100" step="5" value="60" class="slider">
-                    </div>
-
-                    <!-- Generation section -->
-                    <div class="qs-section-label">Generation</div>
-
-                    <div class="setting-row">
-                        <label for="quick-temperature">
-                            <span><i class="fas fa-thermometer-half"></i> Temperature</span>
-                            <span class="qs-right"><span class="setting-value" id="quick-temperature-value">0.5</span><span class="setting-help" title="Controls randomness. 0 = deterministic, 0.5 = balanced, 1.5 = very creative.">?</span></span>
-                        </label>
-                        <input type="range" id="quick-temperature" min="0" max="1.5" step="0.1" value="0.5" class="slider">
-                    </div>
-
-                    <div class="setting-row">
-                        <label for="quick-max-tokens">
-                            <span><i class="fas fa-font"></i> Max Tokens</span>
-                            <span class="qs-right"><span class="setting-value" id="quick-max-tokens-value">768</span><span class="setting-help" title="Maximum response length. Reasoning/thinking models automatically get 3x for their internal reasoning.">?</span></span>
-                        </label>
-                        <input type="range" id="quick-max-tokens" min="128" max="8192" step="128" value="768" class="slider">
-                    </div>
-
-                    <!-- Top P + Repeat Penalty on one row, smaller -->
-                    <div class="qs-compact-row">
-                        <div class="qs-compact-item">
-                            <label for="quick-top-p">
-                                <span>Top P</span>
-                                <span class="qs-right"><span class="setting-value" id="quick-top-p-value">0.9</span><span class="setting-help" title="Nucleus sampling. Only tokens within the top P probability mass are considered. Lower = more focused.">?</span></span>
-                            </label>
-                            <input type="range" id="quick-top-p" min="0.1" max="1.0" step="0.05" value="0.9" class="slider">
-                        </div>
-                        <div class="qs-compact-item">
-                            <label for="quick-repeat-penalty">
-                                <span>Repeat Penalty</span>
-                                <span class="qs-right"><span class="setting-value" id="quick-repeat-penalty-value">1.15</span><span class="setting-help" title="Penalizes repeated tokens. 1.0 = no penalty, higher = less repetition.">?</span></span>
-                            </label>
-                            <input type="range" id="quick-repeat-penalty" min="1.0" max="2.0" step="0.05" value="1.15" class="slider">
-                        </div>
-                    </div>
-
-                    <!-- Prompts section -->
-                    <div class="qs-section-label">Prompts</div>
-
-                    <div class="setting-row">
-                        <label for="quick-system-prompt">
-                            <span><i class="fas fa-comment-dots"></i> System Prompt</span>
-                            <span class="setting-help" title="Instructions for how the AI should behave. Leave empty for default. Add /nothink to disable reasoning on thinking models.">?</span>
-                        </label>
-                        <textarea id="quick-system-prompt" class="form-control prompt-textarea" rows="2" placeholder="You are a helpful assistant answering questions based on provided documents.&#10;Use [Doc N] to cite sources. If information is missing, say so."></textarea>
-                        <small id="think-mode-hint" class="form-help" style="margin-top: 4px; display: none; color: var(--accent-primary);">This model uses reasoning/thinking. Add <code>/nothink</code> to the system prompt to disable it.</small>
-                    </div>
-
-                    <div class="setting-row">
-                        <label for="quick-user-template">
-                            <span><i class="fas fa-file-alt"></i> User Template</span>
-                            <span class="setting-help" title="Template for each query. Use {question} and {context} as placeholders.">?</span>
-                        </label>
-                        <textarea id="quick-user-template" class="form-control prompt-textarea" rows="2" placeholder="Question: {question}&#10;&#10;Documents:&#10;{context}&#10;&#10;Answer based on the documents above:"></textarea>
-                    </div>
-                </div>
-
-                <div id="hyde-tab" class="settings-tab-content" style="display: none;">
-                    <div class="setting-row">
-                        <label for="hyde-temperature">
-                            <span><i class="fas fa-thermometer-half"></i> Temperature</span>
-                            <span class="qs-right"><span class="setting-value" id="hyde-temperature-value">0.2</span><span class="setting-help" title="Creativity for hypothetical answer generation. Lower = more focused.">?</span></span>
-                        </label>
-                        <input type="range" id="hyde-temperature" min="0" max="1.5" step="0.1" value="0.2" class="slider">
-                    </div>
-
-                    <div class="setting-row">
-                        <label for="hyde-max-tokens">
-                            <span><i class="fas fa-font"></i> Max Tokens</span>
-                            <span class="qs-right"><span class="setting-value" id="hyde-max-tokens-value">256</span><span class="setting-help" title="Maximum length of the hypothetical answer (64-1024).">?</span></span>
-                        </label>
-                        <input type="range" id="hyde-max-tokens" min="64" max="1024" step="64" value="256" class="slider">
-                    </div>
-
-                    <div class="setting-row">
-                        <label for="hyde-prompt">
-                            <span><i class="fas fa-magic"></i> HyDE Prompt</span>
-                            <span class="setting-help" title="Instruction prepended before the user's question to generate the hypothetical answer.">?</span>
-                        </label>
-                        <textarea id="hyde-prompt" class="form-control prompt-textarea" rows="2" placeholder="Write a detailed passage that answers this question:"></textarea>
-                    </div>
-                </div>
-
-                <div class="quick-settings-actions">
-                    <button type="button" id="reset-quick-settings" class="btn btn-secondary btn-sm">
-                        <i class="fas fa-undo"></i> Reset
-                    </button>
-                    <button type="button" id="apply-quick-settings" class="btn btn-primary btn-sm">
-                        <i class="fas fa-check"></i> Apply & Close
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div id="hyde-review-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-content" style="max-width: 900px; width: 95%; resize: both; overflow: auto;">
-            <div class="quick-settings-header">
-                <h3><i class="fas fa-lightbulb"></i> HyDE - Review Generated Hypothesis</h3>
-                <button type="button" id="close-hyde-modal" class="btn-icon" title="Cancel">
+                <h3 id="hyde-review-title"><i class="fas fa-lightbulb"></i> HyDE — Review Search Draft</h3>
+                <button type="button" id="close-hyde-modal" class="btn-icon" title="Cancel" aria-label="Cancel HyDE review">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
             <div class="quick-settings-body">
-                <div style="background: rgba(62, 125, 78, 0.1); padding: 12px; border-radius: 8px; margin-bottom: 16px; border-left: 3px solid #3E7D4E;">
-                    <p style="margin: 0; font-size: 13px; color: var(--text-secondary);">
-                        <strong>HyDE Mode:</strong> The LLM generated a hypothetical answer to your question.
-                        You can review and edit it below before using it to search for relevant documents.
+                <div class="hyde-review-warning">
+                    <p id="hyde-review-description">
+                        <strong>This is a hypothetical search draft, not evidence.</strong> It may contain invented details. Review or edit it before Vectoria embeds it for semantic retrieval; the final answer receives only real retrieved documents.
                     </p>
                 </div>
 
@@ -1157,21 +1391,24 @@
 
                 <div style="display: flex; gap: 12px; justify-content: flex-end;">
                     <button type="button" id="hyde-cancel" class="btn btn-secondary btn-sm">
-                        <i class="fas fa-times"></i> Cancel
+                        <i class="fas fa-times"></i> Cancel turn
+                    </button>
+                    <button type="button" id="hyde-without" class="btn btn-secondary btn-sm">
+                        <i class="fas fa-magnifying-glass"></i> Search without HyDE
                     </button>
                     <button type="button" id="hyde-search" class="btn btn-primary btn-sm">
-                        <i class="fas fa-search"></i> Search with This Text
+                        <i class="fas fa-search"></i> Search with this draft
                     </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <div id="processing-summary-modal" class="modal-overlay" style="display: none;">
+    <div id="processing-summary-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="processing-summary-title" style="display: none;">
         <div class="modal-container">
             <div class="modal-header">
-                <h2>Processing Summary</h2>
-                <button type="button" class="modal-close" id="close-processing-summary">
+                <h2 id="processing-summary-title">Processing Summary</h2>
+                <button type="button" class="modal-close" id="close-processing-summary" aria-label="Close processing summary">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
@@ -1187,11 +1424,11 @@
         </div>
     </div>
 
-    <div id="quick-analysis-modal" class="modal-overlay" style="display: none;">
+    <div id="quick-analysis-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="quick-analysis-title" style="display: none;">
         <div class="modal-container" style="max-width: 980px;">
             <div class="modal-header">
-                <h2><i class="fas fa-chart-column"></i> Quick Analysis</h2>
-                <button type="button" class="modal-close" id="close-quick-analysis">
+                <h2 id="quick-analysis-title"><i class="fas fa-chart-column" aria-hidden="true"></i> Quick Analysis</h2>
+                <button type="button" class="modal-close" id="close-quick-analysis" aria-label="Close analysis">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
@@ -1201,11 +1438,11 @@
         </div>
     </div>
 
-    <div id="model-setup-modal" class="modal-overlay" style="display: none;">
+    <div id="model-setup-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Set up AI models" style="display: none;">
         <div class="modal-container model-setup-modal">
-            <div class="modal-header" style="border-bottom: none; padding-bottom: 0; justify-content: flex-end;">
-                <button type="button" class="modal-close" id="close-model-setup">
-                    <i class="fas fa-times"></i>
+            <div class="modal-header model-setup-header">
+                <button type="button" class="modal-close" id="close-model-setup" aria-label="Continue without setting up models">
+                    <i class="fas fa-times" aria-hidden="true"></i>
                 </button>
             </div>
             <div class="modal-body">
@@ -1216,158 +1453,160 @@
                         <span>Browser-first text exploration, clustering and semantic search</span>
                     </div>
                 </div>
-                <p class="model-setup-intro model-setup-intro-lead" style="color: #fff;">
-                    Welcome to Vectoria — a private, browser-native tool for exploring, clustering, and chatting with your documents.
+                <p class="model-setup-intro model-setup-intro-lead">
+                    Set up private, browser-native AI for semantic search, clustering, and document-grounded answers.
                 </p>
-                <p class="model-setup-intro model-setup-intro-lead" style="color: #fff;">
-                    Load your documents, explore them visually, search by meaning, and ask real questions. All powered by local AI models running entirely on your own device.
-                </p>
-                <p class="model-setup-intro" style="color: rgba(255,255,255,0.55); font-size: 0.88em; line-height: 1.6; margin-top: 0.25em;">
-                    Supports CSV, Excel, JSON &amp; TXT data files with text columns &nbsp;&middot;&nbsp; Automatic semantic clustering &amp; 2D visualization &nbsp;&middot;&nbsp; Semantic exploration and search &nbsp;&middot;&nbsp; Enables AI-generated answers using your data (RAG/HyDE)
-                </p>
-                <p class="model-setup-intro" style="color: rgba(255,255,255,0.38); font-size: 0.82em; margin-top: 0.5em;">
-                    <i class="fas fa-lock" style="margin-right: 4px;"></i>100% Private &amp; Open-Source — All processing is on your computer. Your data never leaves your device.
-                </p>
-                <p class="model-setup-intro" style="color: rgba(255,255,255,0.38); font-size: 0.82em; margin-top: 0.2em;">
-                    <i class="fas fa-desktop" style="margin-right: 4px;"></i>Chrome/Edge, WebGPU, 16 GB RAM recommended
-                </p>
-                <p class="model-setup-intro model-setup-intro-lead">To get started, two AI models will be downloaded for local use (one-time setup). All processing is on your computer:</p>
+                <div class="model-setup-requirements" role="note">
+                    <p><i class="fas fa-lock" aria-hidden="true"></i> Processing stays on this device. Models are cached in browser storage.</p>
+                    <p><i class="fas fa-desktop" aria-hidden="true"></i> Chrome or Edge with WebGPU; 16 GB RAM recommended.</p>
+                </div>
+                <p class="model-setup-intro">Two models are downloaded once and remain out of memory until their work needs them.</p>
                 <div class="model-setup-steps">
                     <div class="model-setup-step">
-                        <div class="model-setup-step-title">1. Embeddings model</div>
-                        <div class="model-setup-step-desc">Powers semantic clustering and visualization.</div>
-                        <div class="model-setup-step-desc" style="font-size: 0.85em; color: var(--text-muted);">Converts text into numerical vectors so similar content can be grouped and searched by meaning.</div>
+                        <div class="model-setup-step-title">Embeddings model</div>
+                        <div class="model-setup-step-desc">Loads when document processing or semantic retrieval begins.</div>
+                        <div class="model-setup-step-desc model-setup-step-detail">Converts text into numerical vectors so similar content can be grouped and searched by meaning.</div>
                         <div class="model-setup-step-meta">Model: <span id="model-setup-embedding-name">intfloat/multilingual-e5-small</span></div>
                     </div>
                     <div class="model-setup-step">
-                        <div class="model-setup-step-title">2. Large Language Model</div>
-                        <div class="model-setup-step-desc">Enables Retrieval-Augmented Generation (RAG) for your data.</div>
-                        <div class="model-setup-step-desc" style="font-size: 0.85em; color: var(--text-muted);">Generates natural language answers to your questions using relevant documents as context.</div>
-                        <div class="model-setup-step-meta">Model: <span id="model-setup-llm-name">gemma-2-2b-it-q4f16_1-MLC</span></div>
+                        <div class="model-setup-step-title">Language model</div>
+                        <div class="model-setup-step-desc">Stays unloaded during document processing and loads for your first document question.</div>
+                        <div class="model-setup-step-desc model-setup-step-detail">Generates natural language answers to your questions using relevant documents as context.</div>
+                        <div class="model-setup-step-meta">Model: <span id="model-setup-llm-name">Loading…</span></div>
                     </div>
                 </div>
+                <button type="button" id="model-setup-settings-btn" class="model-setup-settings-link">Change the language model in Settings → Models</button>
                 <div class="model-setup-actions">
-                    <button type="button" id="model-setup-start-btn" class="btn btn-primary">Start setup</button>
-                    <button type="button" id="model-setup-later-btn" class="btn btn-secondary">Not now</button>
+                    <button type="button" id="model-setup-start-btn" class="btn btn-primary">Download models</button>
+                    <button type="button" id="model-setup-later-btn" class="btn btn-secondary">Explore without models</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <div id="model-change-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-container" style="max-width: 480px;">
+    <div id="model-change-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="model-change-title" style="display: none;">
+        <div class="modal-container settings-confirmation-modal">
             <div class="modal-header">
-                <h3>Change Language Model</h3>
-                <button type="button" class="modal-close" id="model-change-cancel-x">
+                <h3 id="model-change-title">Change language model</h3>
+                <button type="button" class="modal-close" id="model-change-cancel-x" aria-label="Cancel model change">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <div class="modal-body" style="padding: 1.5rem;">
-                <p style="margin: 0 0 0.75rem 0;">Switch to <strong id="model-change-name"></strong>?</p>
-                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.9em;">
-                    <i class="fas fa-download"></i> <span id="model-change-size-label">Download size:</span> <strong id="model-change-size"></strong>
+            <div class="modal-body settings-confirmation-body">
+                <p>Switch to <strong id="model-change-name"></strong>?</p>
+                <p class="settings-confirmation-note settings-confirmation-note-primary">
+                    <i class="fas fa-download"></i> <span id="model-change-size-label">First download:</span> <strong id="model-change-size"></strong>
                 </p>
-                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.85em;">
+                <p class="settings-confirmation-note">
+                    <i class="fas fa-memory"></i> Runtime memory: <strong id="model-change-vram"></strong>
+                </p>
+                <p class="settings-confirmation-note">
+                    <i class="fas fa-hard-drive"></i> Browser cache: <strong id="model-change-cache-status">Checking…</strong>
+                </p>
+                <p class="settings-confirmation-note">
+                    <i class="fas fa-shield-alt"></i> Document-answer capability: <strong id="model-change-rag-tier"></strong>
+                </p>
+                <p class="settings-confirmation-note">
                     <i class="fas fa-sync-alt"></i> The page will reload to initialize the new model.
                 </p>
-                <p style="margin: 0; color: var(--text-muted); font-size: 0.85em;">
+                <p class="settings-confirmation-note">
                     <i class="fas fa-database"></i> Models are cached after first download.
                 </p>
             </div>
-            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-color);">
+            <div class="settings-confirmation-actions">
                 <button type="button" class="btn btn-secondary" id="model-change-cancel">Cancel</button>
                 <button type="button" class="btn btn-primary" id="model-change-confirm">Download &amp; Reload</button>
             </div>
         </div>
     </div>
 
-    <div id="context-window-change-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-container" style="max-width: 480px;">
+    <div id="context-window-change-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="context-window-change-title" style="display: none;">
+        <div class="modal-container settings-confirmation-modal">
             <div class="modal-header">
-                <h3>Change Context Window</h3>
-                <button type="button" class="modal-close" id="context-window-cancel-x">
+                <h3 id="context-window-change-title">Change context window</h3>
+                <button type="button" class="modal-close" id="context-window-cancel-x" aria-label="Cancel context-window change">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <div class="modal-body" style="padding: 1.5rem;">
-                <p style="margin: 0 0 0.75rem 0;">Change context window to <strong id="context-window-new-size"></strong> tokens?</p>
-                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.85em;">
+            <div class="modal-body settings-confirmation-body">
+                <p>Change context window to <strong id="context-window-new-size"></strong> tokens?</p>
+                <p class="settings-confirmation-note">
                     <i class="fas fa-sync-alt"></i> The page will reload to reinitialize the language model with the new context size.
                 </p>
-                <p style="margin: 0; color: var(--text-muted); font-size: 0.85em;">
+                <p class="settings-confirmation-note">
                     <i class="fas fa-info-circle"></i> Larger context windows use more memory but allow longer answers and more RAG context.
                 </p>
             </div>
-            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-color);">
+            <div class="settings-confirmation-actions">
                 <button type="button" class="btn btn-secondary" id="context-window-cancel">Cancel</button>
                 <button type="button" class="btn btn-primary" id="context-window-confirm">Apply &amp; Reload</button>
             </div>
         </div>
     </div>
 
-    <div id="reset-settings-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-container" style="max-width: 480px;">
+    <div id="reset-settings-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="reset-settings-title" style="display: none;">
+        <div class="modal-container settings-confirmation-modal">
             <div class="modal-header">
-                <h3>Reset All Settings to Default</h3>
-                <button type="button" class="modal-close" id="reset-settings-cancel-x">
+                <h3 id="reset-settings-title">Reset settings to defaults</h3>
+                <button type="button" class="modal-close" id="reset-settings-cancel-x" aria-label="Cancel settings reset">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <div class="modal-body" style="padding: 1.5rem;">
-                <p style="margin: 0 0 0.75rem 0;">Reset all settings back to their default values?</p>
-                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.85em;">
+            <div class="modal-body settings-confirmation-body">
+                <p>Reset all settings back to their default values?</p>
+                <p class="settings-confirmation-note">
                     <i class="fas fa-undo"></i> This will reset: LLM, Embeddings, Chunking, Prompts, RAG, and Clustering settings.
                 </p>
-                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.85em;">
+                <p class="settings-confirmation-note">
                     <i class="fas fa-sync-alt"></i> The page will reload to apply default settings.
                 </p>
             </div>
-            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-color);">
+            <div class="settings-confirmation-actions">
                 <button type="button" class="btn btn-secondary" id="reset-settings-cancel">Cancel</button>
                 <button type="button" class="btn btn-primary" id="reset-settings-confirm">Reset &amp; Reload</button>
             </div>
         </div>
     </div>
 
-    <div id="reset-all-data-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-container" style="max-width: 480px;">
+    <div id="reset-all-data-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="reset-all-data-title" style="display: none;">
+        <div class="modal-container settings-confirmation-modal">
             <div class="modal-header">
-                <h3>Reset and Clear All Data</h3>
-                <button type="button" class="modal-close" id="reset-all-data-cancel-x">
+                <h3 id="reset-all-data-title">Reset and clear all data</h3>
+                <button type="button" class="modal-close" id="reset-all-data-cancel-x" aria-label="Cancel full reset">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <div class="modal-body" style="padding: 1.5rem;">
-                <p style="margin: 0 0 0.75rem 0; color: var(--danger-color); font-weight: 600;">
+            <div class="modal-body settings-confirmation-body">
+                <p class="settings-confirmation-danger">
                     <i class="fas fa-exclamation-triangle"></i> This action cannot be undone.
                 </p>
-                <p style="margin: 0 0 0.75rem 0;">This will permanently delete everything:</p>
-                <ul style="margin: 0 0 0.75rem 1rem; color: var(--text-muted); font-size: 0.85em; list-style: disc;">
+                <p>This will permanently delete everything:</p>
+                <ul class="settings-confirmation-list">
                     <li>All your documents &amp; embeddings</li>
                     <li>All cached language models</li>
                     <li>All settings and preferences</li>
                     <li>MCP Bridge will be disabled in the browser</li>
                 </ul>
-                <p style="margin: 0 0 0.75rem 0; color: var(--text-muted); font-size: 0.85em;">
+                <p class="settings-confirmation-note">
                     <i class="fas fa-sync-alt"></i> The page will reload fresh as if visiting for the first time.
                 </p>
-                <div id="reset-mcp-notice" style="display: none; background: var(--bg-secondary); border-radius: 7px; padding: 0.65rem 0.85rem; font-size: 0.78rem; color: var(--text-secondary);">
+                <div id="reset-mcp-notice" class="settings-confirmation-notice">
                     <strong>MCP server installed?</strong> Run this to fully uninstall it from your computer:<br>
-                    <code style="font-size: 0.75rem; word-break: break-all;">curl -fsSL https://vectoria.app/static/install-mcp.sh | bash -s -- --uninstall</code>
+                    <code>curl -fsSL https://vectoria.app/static/install-mcp.sh | bash -s -- --uninstall</code>
                 </div>
             </div>
-            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-color);">
+            <div class="settings-confirmation-actions">
                 <button type="button" class="btn btn-secondary" id="reset-all-data-cancel">Cancel</button>
                 <button type="button" class="btn btn-danger" id="reset-all-data-confirm">Delete Everything &amp; Reload</button>
             </div>
         </div>
     </div>
 
-    <div id="cluster-rename-modal" class="modal-overlay" style="display: none;">
+    <div id="cluster-rename-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="cluster-rename-title" style="display: none;">
         <div class="modal-container" style="max-width: 520px;">
             <div class="modal-header">
-                <h3>Edit Cluster Label</h3>
-                <button type="button" class="modal-close" id="cluster-rename-cancel-x">
+                <h3 id="cluster-rename-title">Edit Cluster Label</h3>
+                <button type="button" class="modal-close" id="cluster-rename-cancel-x" aria-label="Cancel cluster rename">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
@@ -1375,15 +1614,15 @@
                 <p style="margin: 0 0 1rem 0; color: var(--text-muted); font-size: 0.9em;">
                     <i class="fas fa-tag"></i> Default: <strong id="cluster-rename-default"></strong>
                 </p>
-                <input type="text" id="cluster-rename-input"
+                <input type="text" id="cluster-rename-input" class="form-control"
                     placeholder="Enter new cluster name..."
-                    style="width: 100%; padding: 0.6rem 0.75rem; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); border-radius: var(--radius-md); color: var(--text-color); font-size: 0.95em; outline: none; box-sizing: border-box;"
+                    style="font-size: 0.95em;"
                 />
                 <p style="margin: 0.75rem 0 0 0; color: var(--text-muted); font-size: 0.8em;">
                     Leave empty to reset to default name.
                 </p>
 
-                <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px dashed var(--border-color);">
+                <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px dashed var(--border-primary);">
                     <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.6rem;">
                         <i class="fas fa-wand-magic-sparkles" style="color: var(--accent-color);"></i>
                         <strong style="font-size:.95em;">Auto-label with AI</strong>
@@ -1393,6 +1632,11 @@
                             <input type="radio" name="cluster-summarizer-mode" value="local" checked>
                             Local LLM (in-browser)
                         </label>
+                        <label style="display:flex; align-items:center; gap:.35rem; font-size:.85em;">
+                            <input type="radio" id="cluster-summarizer-external" name="cluster-summarizer-mode" value="external">
+                            AI client via MCP
+                        </label>
+                        <span id="cluster-summarizer-external-hint" style="display:none; font-size:.76rem; color:var(--text-muted);">Requires an enabled MCP Bridge and a connected AI client.</span>
                     </div>
                     <div style="display:flex; gap:.5rem; margin-top:.75rem; flex-wrap:wrap;">
                         <button type="button" class="btn btn-secondary" id="cluster-ai-label-one" style="font-size:.85em;">
@@ -1405,7 +1649,7 @@
                     <p id="cluster-ai-label-status" style="margin:.6rem 0 0 0; font-size:.8em; color:var(--text-muted); min-height:1em;"></p>
                 </div>
             </div>
-            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-color);">
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.5rem; border-top: 1px solid var(--border-primary);">
                 <button type="button" class="btn btn-secondary" id="cluster-rename-cancel">Cancel</button>
                 <button type="button" class="btn btn-primary" id="cluster-rename-confirm">Save</button>
             </div>
@@ -1414,7 +1658,7 @@
 
     <footer>
         <div class="container">
-            <p>&copy; 2026 VECTORIA | Made with <span style="color: #ff1493;">♥</span> by Armin Pasalic</p>
+            <p>&copy; 2026 VECTORIA | Made with <span class="footer-heart" aria-hidden="true">♥</span> by Armin Pasalic</p>
         </div>
     </footer>
 
@@ -1481,22 +1725,26 @@
         
     </script>
 
-    <script type="module" src="static/js/config-manager.js?v=2026-07-15-97471b1"></script>
-    <script type="module" src="static/js/model-constraints.js?v=2026-07-15-97471b1"></script>
-    <script src="static/js/viz.js"></script>
-    <script src="static/js/webgl-renderer.js"></script>
-    <script src="static/js/hyde-handler.js?v=2026-07-15-97471b1"></script>
-    <script src="static/js/fast-search.js?v=2026-07-15-97471b1"></script>
-    <script src="static/js/search-enhancement.js"></script>
+    <script type="module" src="static/js/config-manager.js?v=2026-08-27-b64b785"></script>
+    <script type="module" src="static/js/model-constraints.js?v=2026-08-27-b64b785"></script>
+    <script src="static/js/dom-safety.js?v=2026-08-27-b64b785"></script>
+    <script src="static/js/viz.js?v=2026-08-27-b64b785"></script>
+    <script src="static/js/webgl-renderer.js?v=2026-08-27-b64b785"></script>
+    <script src="static/js/hyde-handler.js?v=2026-08-27-b64b785"></script>
+    <script src="static/js/fast-search.js?v=2026-08-27-b64b785"></script>
 
-    <script src="static/js/browser-capabilities.js?v=2026-07-15-97471b1"></script>
+    <script src="static/js/browser-capabilities.js?v=2026-08-27-b64b785"></script>
+    <script src="static/js/generation-mode-controller.js?v=2026-08-27-b64b785"></script>
 
     <script type="module">
-        await import('./static/js/browser-integration.js');
+        await import('./static/js/browser-integration.js?v=2026-08-27-b64b785');
     </script>
 
+    <script type="module" src="static/js/workspace-controller.js?v=2026-08-27-b64b785"></script>
+    <script type="module" src="static/js/chat-interface.js?v=2026-08-27-b64b785"></script>
+
     <script type="module">
-        import { initializeBrowserML, setupDatasetSaveLoadHandlers, setupStopGenerationHandler } from './static/js/browser-integration.js';
+        import { initializeBrowserML, prepareBrowserMLFromCache, setupDatasetSaveLoadHandlers, setupStopGenerationHandler } from './static/js/browser-integration.js?v=2026-08-27-b64b785';
 
         // Initialize on page load
         window.addEventListener('DOMContentLoaded', async () => {
@@ -1535,27 +1783,71 @@
                         refreshing = true;
                         window.location.reload();
                     });
-                    navigator.serviceWorker.register('/sw.js')
+                    navigator.serviceWorker.register('/sw.js?v=2026-08-27-b64b785', { updateViaCache: 'none' })
+                        .then(registration => registration.update().catch(() => {}))
                         .catch(err => console.warn('⚠️ Service worker registration failed:', err));
                 }
 
                 const MODEL_PROMPT_KEY = 'vectoria_models_prompted';
                 const MODEL_READY_KEY = 'vectoria_models_ready';
+                const MODEL_SIGNATURE_KEY = 'vectoria_models_ready_signature';
+                const MODEL_AUTOSTART_KEY = 'vectoria_model_setup_autostart';
                 let modelInitStarted = false;
+                // Defaults come from config-manager.js — do not hardcode a model id here.
+                const currentModelSignature = () => {
+                    const fallbackId = () => window.ConfigManager?.DEFAULT_CONFIG?.llm?.model_id || 'unknown';
+                    try {
+                        const modelId = window.ConfigManager?.getConfig()?.llm?.model_id
+                            || localStorage.getItem('vectoria_llm_model')
+                            || fallbackId();
+                        return `llm:${modelId}|embeddings:paraphrase-multilingual-MiniLM-L12-v2`;
+                    } catch (_) {
+                        return `llm:${fallbackId()}|embeddings:paraphrase-multilingual-MiniLM-L12-v2`;
+                    }
+                };
 
                 const modelSetupPanel = document.getElementById('model-setup-panel');
                 const modelSetupModal = document.getElementById('model-setup-modal');
                 const modelSetupStartBtn = document.getElementById('model-setup-start-btn');
                 const modelSetupLaterBtn = document.getElementById('model-setup-later-btn');
+                const modelSetupSettingsBtn = document.getElementById('model-setup-settings-btn');
                 const modelSetupPanelBtn = document.getElementById('start-model-setup-btn');
                 const modelSetupCloseBtn = document.getElementById('close-model-setup');
                 const uploadBtnText = document.getElementById('upload-btn-text');
                 const modelLoadingStatus = document.getElementById('model-loading-status');
                 const modelSetupTitle = modelSetupPanel ? modelSetupPanel.querySelector('strong') : null;
                 const modelSetupDesc = modelSetupPanel ? modelSetupPanel.querySelector('p') : null;
+                const externalGeneration = window.__vectoriaGenerationMode === 'external';
+                const dismissModelSetup = () => {
+                    try { localStorage.setItem(MODEL_PROMPT_KEY, 'true'); } catch (_) {}
+                    if (modelSetupModal) modelSetupModal.style.display = 'none';
+                    modelSetupPanelBtn?.focus();
+                };
+                window.openVectoriaModelSetup = () => {
+                    if (!modelSetupModal) return;
+                    const setupBody = modelSetupModal.querySelector('.modal-body');
+                    if (setupBody) setupBody.scrollTop = 0;
+                    window.clearVisualizationTransientState?.();
+                    modelSetupModal.style.display = 'flex';
+                    requestAnimationFrame(() => modelSetupCloseBtn?.focus());
+                };
+                if (externalGeneration && modelSetupModal) {
+                    const setupLead = modelSetupModal.querySelector('.model-setup-intro.model-setup-intro-lead');
+                    const llmStep = modelSetupModal.querySelector('.model-setup-step:nth-child(2)');
+                    if (setupLead) setupLead.textContent = 'AI client mode downloads only the embeddings model for local search, clustering, and retrieval.';
+                    if (llmStep) {
+                        llmStep.querySelector('.model-setup-step-title').textContent = 'AI client generation';
+                        const descriptions = llmStep.querySelectorAll('.model-setup-step-desc');
+                        if (descriptions[0]) descriptions[0].textContent = 'The local LLM is skipped to save GPU/RAM.';
+                        if (descriptions[1]) descriptions[1].textContent = 'Ask through query_rag_external in your AI client, or prepare a grounded prompt in Vectoria.';
+                        const meta = llmStep.querySelector('.model-setup-step-meta');
+                        if (meta) meta.textContent = 'Local LLM: Not loaded · Answers open in client';
+                    }
+                }
 
                 const setModelSetupUIState = (state, options = {}) => {
                     const { hidePanel = false } = options;
+                    document.documentElement.classList.toggle('models-ready', state === 'ready');
                     if (state === 'ready') {
                         if (modelSetupPanel) {
                             modelSetupPanel.style.display = 'none';
@@ -1577,25 +1869,29 @@
                     if (modelLoadingStatus) {
                         modelLoadingStatus.style.display = 'block';
                         if (state === 'installed') {
-                            modelLoadingStatus.textContent = 'AI models are installed. Click Start setup to load them.';
+                            modelLoadingStatus.textContent = 'AI models are downloaded and will load only when your data needs them.';
                         } else {
-                            modelLoadingStatus.textContent = 'Download the AI models to enable local processing (first time may take a few minutes).';
+                            modelLoadingStatus.textContent = externalGeneration
+                                ? 'Download the embeddings model for local search, clustering, and retrieval.'
+                                : 'Download the AI models to enable local processing (first time may take a few minutes).';
                         }
                     }
 
                     if (modelSetupTitle && modelSetupDesc) {
                         if (state === 'installed') {
-                            modelSetupTitle.textContent = 'AI models installed';
-                            modelSetupDesc.textContent = 'Click Start setup to load them into the browser.';
+                            modelSetupTitle.textContent = 'AI models downloaded';
+                            modelSetupDesc.textContent = 'They stay out of memory until processing or Ask needs them.';
                         } else {
                             modelSetupTitle.textContent = 'Set up AI models';
-                            modelSetupDesc.textContent = 'Download the embeddings + LLM once to enable local processing and search. You control when it starts.';
+                            modelSetupDesc.textContent = externalGeneration
+                                ? 'Download embeddings for local processing. The local LLM is skipped in AI client mode.'
+                                : 'Download embeddings + LLM once. Their runtimes stay unloaded until your data needs them.';
                         }
                     }
 
                     if (modelSetupPanelBtn && !modelInitStarted) {
                         modelSetupPanelBtn.disabled = false;
-                        modelSetupPanelBtn.textContent = state === 'installed' ? 'Load models' : 'Start setup';
+                        modelSetupPanelBtn.textContent = state === 'installed' ? 'Models downloaded' : 'Download models';
                     }
                 };
 
@@ -1607,28 +1903,31 @@
                     }
                     if (modelSetupPanelBtn) {
                         modelSetupPanelBtn.disabled = true;
-                        modelSetupPanelBtn.textContent = 'Starting...';
+                            modelSetupPanelBtn.textContent = 'Downloading...';
                     }
                     if (modelSetupStartBtn) {
                         modelSetupStartBtn.disabled = true;
-                        modelSetupStartBtn.textContent = 'Starting...';
+                            modelSetupStartBtn.textContent = 'Downloading...';
                     }
 
                     try {
                         await initializeBrowserML();
                         try { localStorage.setItem(MODEL_READY_KEY, 'true'); } catch (_) {}
+                        try { localStorage.setItem(MODEL_SIGNATURE_KEY, currentModelSignature()); } catch (_) {}
+                        try { localStorage.removeItem(MODEL_AUTOSTART_KEY); } catch (_) {}
                         setModelSetupUIState('ready');
                         setupDatasetSaveLoadHandlers();
                         setupStopGenerationHandler();
+                        document.dispatchEvent(new CustomEvent('vectoria:models-ready'));
                     } catch (error) {
                         modelInitStarted = false;
                         if (modelSetupPanelBtn) {
                             modelSetupPanelBtn.disabled = false;
-                            modelSetupPanelBtn.textContent = 'Start setup';
+                            modelSetupPanelBtn.textContent = 'Download models';
                         }
                         if (modelSetupStartBtn) {
                             modelSetupStartBtn.disabled = false;
-                            modelSetupStartBtn.textContent = 'Start setup';
+                            modelSetupStartBtn.textContent = 'Download models';
                         }
                         if (modelLoadingStatus) {
                             modelLoadingStatus.textContent = 'Model setup failed. Please try again.';
@@ -1650,42 +1949,54 @@
                 }
 
                 if (modelSetupLaterBtn) {
-                    modelSetupLaterBtn.addEventListener('click', () => {
-                        // Try to close the tab/window
-                        window.close();
-                        // Fallback: if window.close() doesn't work (e.g., not opened by script),
-                        // navigate to a blank page or show a message
-                        setTimeout(() => {
-                            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#666;"><p>You can close this tab now.</p></div>';
-                        }, 100);
-                    });
+                    modelSetupLaterBtn.addEventListener('click', dismissModelSetup);
                 }
 
                 if (modelSetupCloseBtn) {
-                    modelSetupCloseBtn.addEventListener('click', () => {
-                        // Try to close the tab/window (same as "Not now")
-                        window.close();
-                        // Fallback: if window.close() doesn't work (e.g., not opened by script),
-                        // navigate to a blank page or show a message
-                        setTimeout(() => {
-                            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#666;"><p>You can close this tab now.</p></div>';
-                        }, 100);
+                    modelSetupCloseBtn.addEventListener('click', dismissModelSetup);
+                }
+
+                if (modelSetupSettingsBtn) {
+                    modelSetupSettingsBtn.addEventListener('click', () => {
+                        if (modelSetupModal) modelSetupModal.style.display = 'none';
+                        modelSetupPanelBtn?.focus();
+                        window.openAdvancedSettingsCategory?.('models');
                     });
                 }
 
                 let promptShown = false;
                 let alreadyReady = false;
+                let autoStartSetup = false;
                 try {
                     promptShown = localStorage.getItem(MODEL_PROMPT_KEY) === 'true';
                     alreadyReady = localStorage.getItem(MODEL_READY_KEY) === 'true';
+                    autoStartSetup = localStorage.getItem(MODEL_AUTOSTART_KEY) === 'true';
+                    const storedSignature = localStorage.getItem(MODEL_SIGNATURE_KEY);
+                    const expectedSignature = currentModelSignature();
+                    if (alreadyReady && storedSignature && storedSignature !== expectedSignature) {
+                        alreadyReady = false;
+                        autoStartSetup = true;
+                        localStorage.removeItem(MODEL_READY_KEY);
+                        localStorage.setItem(MODEL_AUTOSTART_KEY, 'true');
+                    } else if (alreadyReady && !storedSignature) {
+                        // Migrate installations created before model-specific readiness.
+                        localStorage.setItem(MODEL_SIGNATURE_KEY, expectedSignature);
+                    }
                 } catch (_) {}
 
                 if (alreadyReady) {
-                    setModelSetupUIState('loading', { hidePanel: true });
-                    await startModelInitialization();
+                    setModelSetupUIState('ready');
+                    await prepareBrowserMLFromCache();
+                    setupDatasetSaveLoadHandlers();
+                    setupStopGenerationHandler();
+                    document.dispatchEvent(new CustomEvent('vectoria:models-ready', {
+                        detail: { cached: true, runtimesLoaded: false }
+                    }));
                 } else {
                     setModelSetupUIState('idle');
-                    if (!promptShown && modelSetupModal) {
+                    if (autoStartSetup) {
+                        await startModelInitialization();
+                    } else if (!promptShown && modelSetupModal) {
                         modelSetupModal.style.display = 'flex';
                     }
                 }
@@ -1697,16 +2008,26 @@
         });
     </script>
 
-    <script src="static/js/export-import.js?v=2026-07-15-97471b1"></script>
+    <script src="static/js/export-import.js?v=2026-08-27-b64b785"></script>
 
-    <script src="static/js/vectoria.js?v=2026-07-15-97471b1"></script>
+    <script src="static/js/vectoria.js?v=2026-08-27-b64b785"></script>
 
     <script>
-    // Apply LLM unload flag immediately on page load, before pipeline initializes
-    if (localStorage.getItem('vectoria_mcp_llm_unloaded') === 'true' &&
-        localStorage.getItem('vectoria_mcp_enabled') === 'true') {
-        window.__vectoriaLLMUnloaded = true;
-    }
+    // One controller owns persisted mode, globals, runtime transitions, and UI
+    // notifications. Settings and Chat call the same transition method.
+    window.VectoriaGenerationMode = new window.VectoriaGenerationModeController({
+        storage: localStorage,
+        activeOperation: () => window.browserML?.pipeline?.rag?.activeOperation || null,
+        confirmChange: mode => mode === 'local'
+            ? confirm('Reload Vectoria to initialize the local browser model?')
+            : confirm('Use AI client mode?\n\nAnswers will appear in your AI client chat through Vectoria MCP tools. Vectoria can also prepare grounded prompts for you to paste there. Retrieved excerpts and cluster exemplars may be returned to that client/provider. The local LLM will unload immediately, while its cached files stay available.'),
+        alertBlocked: active => {
+            const description = window.browserML?.pipeline?.rag?._operationLabel?.(active.owner) || 'running a local AI task';
+            alert(`Local AI is currently ${description}. Stop or finish that task before switching generation mode.`);
+        },
+        unloadLocal: () => window.browserML?.unloadLLM?.(),
+        reload: () => window.location.reload()
+    });
 
     // MCP Bridge — connects a SharedWorker to the browser ML pipeline
     (function initMCPBridge() {
@@ -1715,6 +2036,22 @@
         let mcpWorker = null;
         let bridgeStarting = false;
         let relayProbeStatus = 'checking';
+        const mcpState = {
+            connected: false,
+            compatible: null,
+            clientName: '',
+            clientVersion: '',
+            protocolVersion: null
+        };
+
+        const publishMCPState = () => {
+            window.__vectoriaMCPState = { ...mcpState };
+            document.dispatchEvent(new CustomEvent('vectoria:mcp-state', { detail: { ...mcpState } }));
+        };
+
+        window.vectoriaMCP = {
+            get state() { return { ...mcpState }; }
+        };
 
         async function localNetworkPermissionState() {
             if (!navigator.permissions?.query) return 'unknown';
@@ -1753,7 +2090,7 @@
             // SharedWorker can otherwise survive a deploy and keep executing
             // an older relay URL for the lifetime of the browser profile.
             try {
-                const workerUrl = '/static/js/mcp-bridge-worker.js?v=2026-07-15-97471b1';
+                const workerUrl = '/static/js/mcp-bridge-worker.js?v=2026-08-27-b64b785';
                 const workerVersion = new URL(workerUrl, window.location.href).searchParams.get('v');
                 mcpWorker = new SharedWorker(workerUrl, {
                     name: `vectoria-mcp-${workerVersion}`
@@ -1769,15 +2106,37 @@
             mcpWorker.port.onmessage = async (evt) => {
                 const { type, id, method, params, status, connected } = evt.data;
 
+                if (type === 'MCP_RELAY_INFO') {
+                    mcpState.protocolVersion = evt.data.protocolVersion;
+                    mcpState.compatible = evt.data.compatible;
+                    publishMCPState();
+                    if (evt.data.compatible === false) updateMCPStatusUI('outdated');
+                    return;
+                }
+
                 if (type === 'MCP_CLIENT_INFO') {
-                    updateMCPStatusUI('connected', { name: evt.data.name, version: evt.data.version });
+                    mcpState.connected = true;
+                    mcpState.clientName = evt.data.name || '';
+                    mcpState.clientVersion = evt.data.version || '';
+                    publishMCPState();
+                    updateMCPStatusUI(mcpState.compatible === false ? 'outdated' : 'connected', { name: evt.data.name, version: evt.data.version });
                     addMCPConnection(evt.data.name, evt.data.version);
                     return;
                 }
 
                 if (type === 'MCP_STATUS' || type === 'MCP_PONG') {
                     const isConnected = status === 'connected' || connected;
-                    updateMCPStatusUI(isConnected ? 'connected' : (relayProbeStatus === 'ready' ? 'disconnected' : relayProbeStatus));
+                    mcpState.connected = isConnected;
+                    if (!isConnected) {
+                        mcpState.clientName = '';
+                        mcpState.clientVersion = '';
+                    }
+                    publishMCPState();
+                    updateMCPStatusUI(
+                        mcpState.compatible === false
+                            ? 'outdated'
+                            : isConnected ? 'connected' : (relayProbeStatus === 'ready' ? 'disconnected' : relayProbeStatus)
+                    );
                     return;
                 }
 
@@ -1796,6 +2155,8 @@
                     const ds = window.browserML?.pipeline?.currentDataset;
                     return respond({
                         ready: window.browserML?.isReady ?? false,
+                        generationMode: window.__vectoriaGenerationMode === 'external' ? 'external' : 'local',
+                        localLLMLoaded: window.browserML?.llmLoaded ?? false,
                         documentCount: ds?.documents?.length ?? 0,
                         datasetId: ds?.id ?? null,
                         fileName: ds?.fileName ?? null,
@@ -1845,6 +2206,65 @@
                 // ---- Advanced analysis routes ----
                 const pipeline = window.browserML?.pipeline;
 
+                if (method === 'POST /bridge/query_local') {
+                    try {
+                        if (window.__vectoriaGenerationMode === 'external') {
+                            return respond({ error: 'Local LLM is unloaded. Use query_rag_external instead.' });
+                        }
+                        if (!pipeline?.queryLocalGrounded) return respond({ error: 'Local RAG is not initialized' });
+                        const question = String(params?.question || '').trim();
+                        if (!question) return respond({ error: 'question required' });
+                        const scope = params?.scope === 'current'
+                            ? window.getCurrentRAGScope?.('current')
+                            : window.getCurrentRAGScope?.('all');
+                        if (params?.scope === 'current' && scope?.docIds?.length === 0) {
+                            return respond({ error: 'No documents match the current selection or filters', sources: [] });
+                        }
+                        const result = await pipeline.queryLocalGrounded(question, {
+                            numResults: params?.k || params?.num_results || 5,
+                            searchType: params?.search_type || 'semantic',
+                            allowedDocIds: params?.scope === 'current' ? scope?.docIds : null,
+                            metadataFilters: params?.metadata_filters || {},
+                            includePersistentFilters: params?.use_persistent_filters === true,
+                            includeMetadata: params?.include_metadata !== false,
+                            metadataFields: params?.metadata_fields,
+                            retrievalK: params?.retrieval_k,
+                            vectorWeight: params?.vector_weight
+                        });
+                        return respond(result);
+                    } catch (e) { return respond({ error: e.message, answer: '', sources: [] }); }
+                }
+
+                if (method === 'POST /bridge/retrieve_context') {
+                    try {
+                        if (!pipeline?.retrieveRAGContext) return respond({ error: 'RAG retrieval is not initialized' });
+                        const question = String(params?.question || '').trim();
+                        if (!question) return respond({ error: 'question required' });
+                        const scope = params?.scope === 'current' ? window.getCurrentRAGScope?.('current') : window.getCurrentRAGScope?.('all');
+                        if (params?.scope === 'current' && scope?.docIds?.length === 0) {
+                            return respond({ error: 'No documents match the current selection or filters', sources: [] });
+                        }
+                        const result = await pipeline.retrieveRAGContext(question, {
+                            numResults: params?.k || params?.num_results || 5,
+                            searchType: params?.search_type || 'semantic',
+                            allowedDocIds: params?.scope === 'current' ? scope?.docIds : null,
+                            metadataFilters: params?.metadata_filters || {},
+                            includePersistentFilters: params?.use_persistent_filters === true,
+                            includeMetadata: params?.include_metadata !== false,
+                            metadataFields: params?.metadata_fields,
+                            retrievalK: params?.retrieval_k,
+                            vectorWeight: params?.vector_weight
+                        });
+                        return respond({
+                            ...result,
+                            context_prompt: result.contextPrompt,
+                            retrieval_metadata: result.metadata,
+                            scope: params?.scope === 'current' ? 'current' : 'all',
+                            generation_provider: 'mcp_client_chat'
+                        });
+                    } catch (e) { return respond({ error: e.message, sources: [] }); }
+                }
+
                 if (method === 'POST /bridge/summarize_cluster') {
                     if (!pipeline?.analysis) return respond({ error: 'Analysis service unavailable' });
                     try { return respond(await pipeline.analysis.summarizeCluster(params || {})); }
@@ -1855,11 +2275,11 @@
                     catch (e) { return respond({ error: e.message }); }
                 }
                 if (method === 'POST /bridge/cross_tabulate') {
-                    try { return respond(pipeline.analysis.crossTabulate(params || {})); }
+                    try { return respond(pipeline.analysis.crossTabulate({ ...(params || {}), use_persistent_filters: true })); }
                     catch (e) { return respond({ error: e.message }); }
                 }
                 if (method === 'POST /bridge/aggregate') {
-                    try { return respond(pipeline.analysis.aggregate(params || {})); }
+                    try { return respond(pipeline.analysis.aggregate({ ...(params || {}), use_persistent_filters: true })); }
                     catch (e) { return respond({ error: e.message }); }
                 }
                 if (method === 'POST /bridge/compare_clusters') {
@@ -1867,21 +2287,52 @@
                     catch (e) { return respond({ error: e.message }); }
                 }
                 if (method === 'POST /bridge/multi_vector_search') {
-                    try { return respond(await pipeline.analysis.multiVectorSearch(params || {})); }
+                    try { return respond(await pipeline.analysis.multiVectorSearch({ ...(params || {}), use_persistent_filters: true })); }
                     catch (e) { return respond({ error: e.message }); }
                 }
                 if (method === 'POST /bridge/query_with_citations') {
                     try {
+                        if (window.__vectoriaGenerationMode === 'external') {
+                            return respond({ error: 'Local LLM is unloaded. Use query_rag_external instead.' });
+                        }
                         if (!pipeline?.rag) return respond({ error: 'RAG not initialized' });
+                        if (pipeline.isProcessing) return respond({ error: 'Wait for data processing to finish before using local generation.' });
                         const question = params?.question;
                         if (!question) return respond({ error: 'question required' });
-                        const qEmb = await pipeline.embeddings.embedSingle(question, { mode: 'query' });
-                        const result = await pipeline.rag.queryWithCitations(question, qEmb, params || {});
-                        return respond(result);
+                        const filterScope = pipeline.createMetadataFilterScope(params?.metadata_filters || {}, {
+                            includePersistent: true
+                        });
+                        if (filterScope.applied && filterScope.matchedDocuments === 0) {
+                            return respond({
+                                answer: '',
+                                claims: [],
+                                sources: [],
+                                metadata: { filter: pipeline.serializeMetadataFilterScope(filterScope) }
+                            });
+                        }
+                        const operationToken = pipeline.rag.beginOperation('mcp', {
+                            datasetId: pipeline.currentDatasetId || pipeline.currentDataset?.id || null
+                        });
+                        try {
+                            const qEmb = await pipeline.embeddings.embedSingle(question, { mode: 'query' });
+                            const result = await pipeline.rag.queryWithCitations(question, qEmb, {
+                                ...(params || {}),
+                                allowedDocIds: pipeline.combineAllowedDocIds(null, filterScope),
+                                operationToken,
+                                owner: 'mcp'
+                            });
+                            result.metadata = {
+                                ...(result.metadata || {}),
+                                filter: pipeline.serializeMetadataFilterScope(filterScope)
+                            };
+                            return respond(result);
+                        } finally {
+                            pipeline.rag.endOperation(operationToken);
+                        }
                     } catch (e) { return respond({ error: e.message }); }
                 }
                 if (method === 'POST /bridge/filter_to_subset') {
-                    try { return respond(pipeline.analysis.filterToSubset(params || {})); }
+                    try { return respond(pipeline.analysis.filterToSubset({ ...(params || {}), use_persistent_filters: true })); }
                     catch (e) { return respond({ error: e.message }); }
                 }
 
@@ -1898,7 +2349,15 @@
                 // ---- Cluster label set ----
                 if (method === 'POST /bridge/clusters/label') {
                     try {
-                        const ok = pipeline.setCustomClusterLabel(params.cluster_id, params.label, params.source || 'mcp');
+                        const target = window.validateExternalClusterLabelTarget?.(params.cluster_id);
+                        if (target && target.ok === false) {
+                            return respond({ error: target.error, ok: false, cluster_id: params.cluster_id });
+                        }
+                        const requestedSource = params.source || 'mcp';
+                        const labelSource = requestedSource === 'mcp'
+                            ? (window.vectoriaMCP?.state?.clientName || 'Connected AI')
+                            : requestedSource;
+                        const ok = pipeline.setCustomClusterLabel(params.cluster_id, params.label, labelSource);
                         return respond({ ok, cluster_id: params.cluster_id, label: params.label });
                     } catch (e) { return respond({ error: e.message }); }
                 }
@@ -1990,6 +2449,14 @@
             mcpWorker = null;
             bridgeStarting = false;
             relayProbeStatus = 'checking';
+            Object.assign(mcpState, {
+                connected: false,
+                compatible: null,
+                clientName: '',
+                clientVersion: '',
+                protocolVersion: null
+            });
+            publishMCPState();
             updateMCPStatusUI('disabled');
         }
 
@@ -2044,18 +2511,22 @@
                 disconnected: { text: '○ Retrying local MCP relay…', bg: '#78350f', color: '#fcd34d' },
                 unavailable:  { text: 'Local MCP relay not reachable', bg: '#78350f', color: '#fcd34d' },
                 blocked:      { text: 'Local Network Access blocked', bg: '#7f1d1d', color: '#fecaca' },
+                outdated:     { text: 'MCP relay update required', bg: '#7f1d1d', color: '#fecaca' },
                 disabled:     { text: 'Not installed / disabled', bg: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }
             };
             const help = {
                 checking: 'Checking the relay and requesting browser permission when required.',
                 disconnected: 'The relay was found. Keep your AI client open while Vectoria reconnects.',
                 unavailable: 'Fully quit and reopen your AI client. If your browser asks for Local Network Access, choose Allow, then turn the bridge off and on.',
-                blocked: 'Allow Local Network Access for vectoria.app in your browser site settings, then turn the bridge off and on.'
+                blocked: 'Allow Local Network Access for vectoria.app in your browser site settings, then turn the bridge off and on.',
+                outdated: 'Re-run the Vectoria MCP installer, then fully restart your AI client.'
             };
             const s = map[status] || map.disabled;
             if (pill) {
                 let label = s.text;
-                if (status === 'connected' && clientInfo?.name) label = `● Connected · ${clientInfo.name}`;
+                if (status === 'connected' && clientInfo?.name) {
+                    label = `● Connected · ${clientInfo.name} · Tools ready`;
+                }
                 pill.textContent = label;
                 pill.style.background = s.bg;
                 pill.style.color = s.color;
@@ -2125,32 +2596,38 @@
                 resetNotice.style.display = 'block';
             }
 
-            // LLM unload toggle — both directions require a page reload
-            const llmToggle = document.getElementById('mcp-llm-unloaded');
+            // Generation mode is separate from the bridge. External mode unloads
+            // immediately; local mode reloads so WebLLM can initialize cleanly.
+            const localModeRadio = document.getElementById('generation-mode-local');
+            const externalModeRadio = document.getElementById('generation-mode-external');
             const llmToggleRow = document.getElementById('mcp-llm-toggle-row');
-            if (llmToggle) {
-                llmToggle.checked = localStorage.getItem('vectoria_mcp_llm_unloaded') === 'true';
-                llmToggle.addEventListener('change', () => {
-                    if (llmToggle.checked) {
-                        if (confirm('The local LLM will be unloaded and the page will reload.\n\nAfterwards, use the query_rag_external tool in your AI client — it answers using retrieved context.\n\nContinue?')) {
-                            localStorage.setItem('vectoria_mcp_llm_unloaded', 'true');
-                            window.location.reload();
-                        } else {
-                            llmToggle.checked = false;
-                        }
-                    } else {
-                        if (confirm('The page will reload to reinitialize the local LLM.\n\nContinue?')) {
-                            localStorage.setItem('vectoria_mcp_llm_unloaded', 'false');
-                            window.location.reload();
-                        } else {
-                            llmToggle.checked = true;
-                        }
-                    }
-                });
-            }
+            const syncGenerationModeUI = () => {
+                const mode = window.VectoriaGenerationMode.mode;
+                if (localModeRadio) localModeRadio.checked = mode === 'local';
+                if (externalModeRadio) externalModeRadio.checked = mode === 'external';
+                const statusEl = document.getElementById('generation-mode-status');
+                const state = window.__vectoriaMCPState || {};
+                if (statusEl) {
+                    statusEl.textContent = mode === 'local'
+                        ? 'Local generation is active.'
+                        : state.compatible === false
+                            ? 'Local MCP relay is outdated · reinstall Vectoria MCP and restart your AI client.'
+                            : state.connected
+                            ? `${state.clientName || 'AI client'} connected · answers open in the client chat through Vectoria tools.`
+                            : 'AI client mode selected · connect an MCP client, then use query_rag_external from its chat.';
+                }
+            };
+            localModeRadio?.addEventListener('change', () => {
+                if (localModeRadio.checked) window.VectoriaGenerationMode.request('local');
+            });
+            externalModeRadio?.addEventListener('change', () => {
+                if (externalModeRadio.checked) window.VectoriaGenerationMode.request('external');
+            });
+            document.addEventListener('vectoria:mcp-state', syncGenerationModeUI);
+            window.VectoriaGenerationMode.subscribe(syncGenerationModeUI);
 
             function syncLLMToggleVisibility(isEnabled) {
-                if (llmToggleRow) llmToggleRow.style.display = isEnabled ? 'block' : 'none';
+                if (llmToggleRow) llmToggleRow.style.display = 'block';
             }
 
             if (enabled) { startBridge(); syncLLMToggleVisibility(true); }

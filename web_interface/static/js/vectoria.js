@@ -14,34 +14,7 @@ function updateSlidersForModel(modelId) {
     }
 
     const constraints = window.getModelConstraints(modelId);
-    // Update Advanced Settings sliders
-    const tempSlider = document.getElementById('temperature');
-    const maxTokensSlider = document.getElementById('max-tokens');
-
-    if (tempSlider) {
-        tempSlider.min = constraints.temp[0];
-        tempSlider.max = constraints.temp[1];
-        // Clamp current value to new range
-        if (parseFloat(tempSlider.value) > constraints.temp[1]) {
-            tempSlider.value = constraints.recommendedTemp || constraints.temp[1];
-        }
-        // Update display
-        const valueDisplay = tempSlider.nextElementSibling;
-        if (valueDisplay && valueDisplay.classList.contains('range-value')) {
-            valueDisplay.textContent = tempSlider.value;
-        }
-    }
-
-    if (maxTokensSlider) {
-        maxTokensSlider.min = constraints.maxTokens[0];
-        maxTokensSlider.max = constraints.maxTokens[1];
-        // Clamp current value to new range
-        if (parseInt(maxTokensSlider.value, 10) > constraints.maxTokens[1]) {
-            maxTokensSlider.value = constraints.recommendedMaxTokens || Math.min(768, constraints.maxTokens[1]);
-        }
-    }
-
-    // Update RAG Settings modal sliders
+    // Update Search & answers sliders.
     const quickTempSlider = document.getElementById('quick-temperature');
     const quickMaxTokensSlider = document.getElementById('quick-max-tokens');
 
@@ -65,7 +38,31 @@ function updateSlidersForModel(modelId) {
         if (valueDisplay) valueDisplay.textContent = quickMaxTokensSlider.value;
     }
 
+    updateContextWindowOptionsForModel(constraints);
+
     showToast(`Sliders updated for ${constraints.description}`, 'info');
+}
+
+/**
+ * Hide context-window sizes the selected model cannot serve. WebLLM accepts any
+ * context_window_size override without validating it against the model, so a
+ * 32K pick on a 4K model only fails later, mid-generation.
+ */
+function updateContextWindowOptionsForModel(constraints) {
+    const select = document.getElementById('context-window-size');
+    if (!select) return;
+    const ceiling = Number(constraints?.contextWindow) || 4096;
+    let highestAllowed = 0;
+    Array.from(select.options).forEach(option => {
+        const size = parseInt(option.value, 10);
+        const allowed = Number.isFinite(size) && size <= ceiling;
+        option.hidden = !allowed;
+        option.disabled = !allowed;
+        if (allowed) highestAllowed = Math.max(highestAllowed, size);
+    });
+    if (parseInt(select.value, 10) > ceiling && highestAllowed) {
+        select.value = String(highestAllowed);
+    }
 }
 
 // Store visualization instances
@@ -94,10 +91,13 @@ window.__textListLock = null;
 
 // Custom cluster names storage (clusterId -> custom name)
 let customClusterNames = new Map();
+var clusterLabelProvenance = new Map();
+try {
+    localStorage.removeItem('vectoria_cluster_names');
+    localStorage.removeItem('vectoria_cluster_label_provenance');
+} catch (_) {}
 
-function unlockTextList(reason = '') {
-    if (window.__textListLock) {
-    }
+function unlockTextList(_reason = '') {
     window.__textListLock = null;
     updateExportButtonVisibility();
 }
@@ -207,28 +207,49 @@ function applyThemePreference(theme, skipTransition) {
     htmlElement.classList.add(normalized);
     htmlElement.setAttribute('data-theme', normalized);
 
-    // Update both theme toggle icon buttons
-    ['theme-toggle', 'header-theme-toggle'].forEach(id => {
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) {
+        themeColor.setAttribute('content', normalized === 'dark' ? '#050505' : '#F0F0F0');
+    }
+
+    // Update the theme control kept in Settings.
+    ['theme-toggle'].forEach(id => {
         const btn = document.getElementById(id);
         if (!btn) return;
         const icon = btn.querySelector('i');
         if (icon) {
             icon.className = normalized === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
         }
-        btn.setAttribute('aria-label', normalized === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+        const targetTheme = normalized === 'dark' ? 'light' : 'dark';
+        const actionText = `${targetTheme[0].toUpperCase()}${targetTheme.slice(1)} mode`;
+        const label = btn.querySelector('#theme-toggle-label');
+        if (label) label.textContent = actionText;
+        btn.classList.toggle('is-dark', normalized === 'dark');
+        btn.setAttribute('aria-label', `Switch to ${targetTheme} mode`);
+        btn.setAttribute('title', `Switch to ${targetTheme} mode`);
     });
 
     updateLogoForTheme(normalized);
 
     if (window.mainVisualization) {
         try {
-            window.mainVisualization.centerView({ preferClusterCenter: true, animate: false });
+            window.mainVisualization.hideTooltip?.();
             window.mainVisualization.requestRender();
         } catch (error) {
-            console.warn('Unable to re-center visualization after theme change', error);
+            console.warn('Unable to redraw visualization after theme change', error);
         }
     }
 }
+
+function clearVisualizationTransientState({ clearChatPreview = true } = {}) {
+    const visualization = window.mainVisualization;
+    if (!visualization) return;
+    visualization.cancelDeferredTooltip?.();
+    visualization.hideTooltip?.();
+    if (clearChatPreview) visualization.clearChatPreview?.();
+}
+
+window.clearVisualizationTransientState = clearVisualizationTransientState;
 
 function updateLogoForTheme(theme) {
     const useDark = theme === 'dark';
@@ -249,12 +270,14 @@ function updateModelSetupModalModelNames() {
     const config = window.ConfigManager ? window.ConfigManager.getConfig() : null;
     const defaults = window.ConfigManager ? window.ConfigManager.DEFAULT_CONFIG : null;
 
+    // Model names come from the saved config, then the shipped defaults. No
+    // literal fallback here: config-manager.js owns those values.
     const embeddingName = config?.embeddings?.model_name
         || defaults?.embeddings?.model_name
-        || 'intfloat/multilingual-e5-small';
+        || '';
     const llmName = config?.llm?.model_id
         || defaults?.llm?.model_id
-        || 'gemma-2-2b-it-q4f16_1-MLC';
+        || '';
 
     if (embeddingEl) embeddingEl.textContent = embeddingName;
     if (llmEl) llmEl.textContent = llmName;
@@ -282,10 +305,6 @@ function initThemeToggle() {
         toggleBtn.addEventListener('click', themeClickHandler);
     }
 
-    const headerBtn = document.getElementById('header-theme-toggle');
-    if (headerBtn) {
-        headerBtn.addEventListener('click', themeClickHandler);
-    }
 }
 
 // Vibrant Tailwind-inspired color palette
@@ -329,6 +348,10 @@ const DIMMED_NEUTRAL_COLOR = 'rgba(82, 86, 94, 0.75)';
 const COLOR_STORAGE_KEY = 'vectoria_cluster_topics_v2_tailwind';
 function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
+}
+
+function safeClusterColor(value, fallback = null) {
+    return window.VectoriaDOM?.safeColor?.(value, fallback) ?? fallback;
 }
 
 function hslToHex(h, s, l) {
@@ -441,7 +464,11 @@ class VectoriaColorManager {
                 if (raw) {
                     const parsed = JSON.parse(raw);
                     if (parsed && typeof parsed === 'object') {
-                        return parsed;
+                        return Object.fromEntries(
+                            Object.entries(parsed)
+                                .map(([key, color]) => [key, safeClusterColor(color)])
+                                .filter(([, color]) => color)
+                        );
                     }
                 }
             }
@@ -475,12 +502,13 @@ class VectoriaColorManager {
     }
 
     registerColor(clusterId, clusterName, color) {
-        if (!color) return;
+        const safeColor = safeClusterColor(color);
+        if (!safeColor) return;
         const key = this.topicKey(clusterId, clusterName);
-        this.colorCache.set(key, color);
+        this.colorCache.set(key, safeColor);
         const normalized = this.normalizeTopic(clusterName);
         if (normalized) {
-            this.topicColorMap[normalized] = color;
+            this.topicColorMap[normalized] = safeColor;
             this.saveTopicColorMap();
         }
     }
@@ -506,8 +534,11 @@ class VectoriaColorManager {
         }
 
         if (providedColor) {
-            this.registerColor(clusterId, clusterName, providedColor);
-            return providedColor;
+            const safeColor = safeClusterColor(providedColor);
+            if (safeColor) {
+                this.registerColor(clusterId, clusterName, safeColor);
+                return safeColor;
+            }
         }
 
         const normalized = this.normalizeTopic(clusterName);
@@ -620,23 +651,14 @@ function clusterLabelDisplay(value) {
 }
 window.clusterLabelDisplay = clusterLabelDisplay;
 
-// Cluster renaming persistence
-function saveCustomClusterNames() {
-    const obj = Object.fromEntries(customClusterNames);
-    try { localStorage.setItem('vectoria_cluster_names', JSON.stringify(obj)); } catch (_) {}
+function clearActiveClusterLabels() {
+    customClusterNames.clear();
+    clusterLabelProvenance.clear();
+    _externalHandoffState = null;
+    window.browserML?.pipeline?.customClusterLabels?.clear?.();
+    window.__clusterLabelCache = null;
 }
-
-function loadCustomClusterNames() {
-    try {
-        const saved = localStorage.getItem('vectoria_cluster_names');
-        if (saved) {
-            const obj = JSON.parse(saved);
-            customClusterNames = new Map(Object.entries(obj).map(([k, v]) => [parseInt(k, 10), v]));
-        }
-    } catch (e) {
-        console.warn('Failed to load custom cluster names:', e);
-    }
-}
+window.clearActiveClusterLabels = clearActiveClusterLabels;
 
 function renameCluster(clusterId, newName) {
     if (clusterId === -1) {
@@ -648,11 +670,15 @@ function renameCluster(clusterId, newName) {
     if (!trimmedName) {
         // Empty name = reset to default
         customClusterNames.delete(clusterId);
+        clusterLabelProvenance.delete(clusterId);
+        window.browserML?.pipeline?.customClusterLabels?.delete?.(clusterId);
     } else {
-        customClusterNames.set(clusterId, trimmedName);
+        if (!window.browserML?.pipeline?.setCustomClusterLabel?.(clusterId, trimmedName, 'manual')) {
+            customClusterNames.set(clusterId, trimmedName);
+        }
+        clusterLabelProvenance.set(clusterId, { source: 'manual', updated_at: Date.now() });
     }
 
-    saveCustomClusterNames();
     refreshClusterDisplays();
     showToast('Cluster renamed', 'success');
 }
@@ -674,13 +700,20 @@ function promptRenameCluster(clusterId) {
     const cancelXBtn = document.getElementById('cluster-rename-cancel-x');
     const aiOne = document.getElementById('cluster-ai-label-one');
     const aiAll = document.getElementById('cluster-ai-label-all');
+    const localRadio = document.querySelector('input[name="cluster-summarizer-mode"][value="local"]');
     const extRadio = document.getElementById('cluster-summarizer-external');
+    const summarizerRadios = [...document.querySelectorAll('input[name="cluster-summarizer-mode"]')];
     const extHint = document.getElementById('cluster-summarizer-external-hint');
     const aiStatus = document.getElementById('cluster-ai-label-status');
 
     defaultLabel.textContent = defaultClusterName;
     input.value = hasCustomName ? customClusterNames.get(clusterId) : '';
-    if (aiStatus) aiStatus.textContent = '';
+    if (aiStatus) {
+        const provenance = window.browserML?.pipeline?.getCustomClusterLabel?.(clusterId)
+            || clusterLabelProvenance.get(clusterId);
+        const source = provenance?.source;
+        aiStatus.textContent = source ? `Label source: ${source === 'local' ? 'Local AI' : source === 'manual' ? 'Manual' : source}` : '';
+    }
     syncSummarizerMcpAvailability();
 
     const closeModal = () => {
@@ -691,6 +724,9 @@ function promptRenameCluster(clusterId) {
         modal.removeEventListener('click', onOverlay);
         document.removeEventListener('keydown', onKeydown);
         document.removeEventListener('vectoria:mcp-status', syncSummarizerMcpAvailability);
+        document.removeEventListener('vectoria:mcp-state', syncSummarizerMcpAvailability);
+        document.removeEventListener('vectoria:generation-mode-changed', syncSummarizerMcpAvailability);
+        summarizerRadios.forEach(radio => radio.removeEventListener('change', syncSummarizerMcpAvailability));
         if (aiOne) aiOne.onclick = null;
         if (aiAll) aiAll.onclick = null;
     };
@@ -711,17 +747,18 @@ function promptRenameCluster(clusterId) {
         if (e.key === 'Enter' && document.activeElement === input) onConfirm();
     };
 
-    // Labelling always runs the local model from the in-page button. External
-    // (MCP AI) labelling is AI-initiated only — see getSummarizerMode().
     if (aiOne) {
         aiOne.onclick = async () => {
             // The top progress banner carries live feedback now; keep a tiny inline hint.
             if (aiStatus) aiStatus.textContent = 'Working… see the banner at the top of the page.';
             try {
-                const newLabel = await window.aiLabelSingleCluster(clusterId, 'local');
+                const mode = getSummarizerMode();
+                const newLabel = await window.aiLabelSingleCluster(clusterId, mode);
                 if (newLabel) {
                     input.value = newLabel;
                     if (aiStatus) aiStatus.textContent = `New label: "${newLabel}"`;
+                } else if (mode === 'external') {
+                    if (aiStatus) aiStatus.textContent = 'Instruction prepared — paste and send it in your AI client.';
                 } else {
                     if (aiStatus) aiStatus.textContent = '';
                 }
@@ -734,8 +771,10 @@ function promptRenameCluster(clusterId) {
         aiAll.onclick = async () => {
             if (aiStatus) aiStatus.textContent = 'Working… see the banner at the top of the page.';
             try {
-                const summary = await window.aiLabelAllClusters('local');
-                if (aiStatus) aiStatus.textContent = `Labelled ${summary.labelled}/${summary.total} clusters.`;
+                const summary = await window.aiLabelAllClusters(getSummarizerMode());
+                if (aiStatus) aiStatus.textContent = summary.handoff
+                    ? 'Instruction prepared — paste and send it in your AI client.'
+                    : `Labelled ${summary.labelled}/${summary.total} clusters.`;
             } catch (e) {
                 if (aiStatus) aiStatus.textContent = `Failed: ${e.message}`;
             }
@@ -748,27 +787,77 @@ function promptRenameCluster(clusterId) {
     modal.addEventListener('click', onOverlay);
     document.addEventListener('keydown', onKeydown);
     document.addEventListener('vectoria:mcp-status', syncSummarizerMcpAvailability);
+    document.addEventListener('vectoria:mcp-state', syncSummarizerMcpAvailability);
+    document.addEventListener('vectoria:generation-mode-changed', syncSummarizerMcpAvailability);
+    summarizerRadios.forEach(radio => radio.addEventListener('change', syncSummarizerMcpAvailability));
 
+    clearVisualizationTransientState();
     modal.style.display = 'flex';
     input.focus();
     input.select();
 
     function syncSummarizerMcpAvailability() {
-        // External (MCP AI) labelling is AI-initiated only — the in-page button always
-        // uses the local model. Remove the external radio if present and force local.
-        if (extRadio) {
-            const localRadio = document.querySelector('input[name="cluster-summarizer-mode"][value="local"]');
-            if (localRadio) localRadio.checked = true;
-            const wrapper = extRadio.closest('label') || extRadio;
-            wrapper.style.display = 'none';
+        const availability = getClusterLabelAvailability();
+        if (localRadio) {
+            const wrapper = localRadio.closest('label') || localRadio;
+            localRadio.disabled = !availability.localReady;
+            wrapper.style.opacity = availability.localReady ? '1' : '0.5';
+            wrapper.title = availability.localReady
+                ? ''
+                : availability.localReason;
         }
-        if (extHint) extHint.style.display = 'none';
+        if (extRadio) {
+            const wrapper = extRadio.closest('label') || extRadio;
+            wrapper.style.display = '';
+            wrapper.style.opacity = availability.externalReady ? '1' : '0.5';
+            wrapper.title = availability.externalReady ? '' : availability.externalReason;
+            extRadio.disabled = !availability.externalReady;
+            if (window.__vectoriaGenerationMode === 'external' && availability.externalReady) {
+                extRadio.checked = true;
+            } else if (extRadio.checked && !availability.externalReady && availability.localReady && localRadio) {
+                localRadio.checked = true;
+            }
+        }
+        if (extHint) {
+            extHint.style.display = '';
+            extHint.textContent = availability.externalReady
+                ? `Connected to ${getAIClientDisplayName()}. Vectoria copies an instruction for you to paste and send.`
+                : availability.externalReason;
+        }
+        const external = getSummarizerMode() === 'external';
+        const modeReady = external ? availability.externalReady : availability.localReady;
+        const clientName = getAIClientDisplayName();
+        if (aiOne) aiOne.innerHTML = external
+            ? `<i class="fas fa-copy"></i> Prepare this cluster for ${clientName}`
+            : '<i class="fas fa-wand-magic-sparkles"></i> Label this cluster';
+        if (aiAll) aiAll.innerHTML = external
+            ? `<i class="fas fa-copy"></i> Prepare all for ${clientName}`
+            : '<i class="fas fa-list"></i> Label all clusters';
+        if (aiOne) {
+            aiOne.disabled = !modeReady;
+            aiOne.title = modeReady ? '' : (external ? availability.externalReason : availability.localReason);
+        }
+        if (aiAll) {
+            aiAll.disabled = !modeReady;
+            aiAll.title = modeReady ? '' : (external ? availability.externalReason : availability.localReason);
+        }
     }
 }
 
 // Cancellation flag for in-flight bulk labelling. Checked between clusters.
 let _cancelClusterLabelling = false;
-function cancelClusterLabelling() { _cancelClusterLabelling = true; }
+function cancelClusterLabelling() {
+    _cancelClusterLabelling = true;
+    if (_externalHandoffState) {
+        const total = _externalHandoffState.ids.size;
+        const index = _externalHandoffState.received.size;
+        _externalHandoffState = null;
+        emitLabelProgress({ phase: 'dismissed', index, total, labelled: index });
+        return;
+    }
+    _externalHandoffState = null;
+    window.browserML?.pipeline?.abortRAG?.('cluster-label');
+}
 window.cancelClusterLabelling = cancelClusterLabelling;
 
 function emitLabelProgress(detail) {
@@ -782,6 +871,10 @@ function emitLabelProgress(detail) {
 async function aiLabelCluster(clusterId, summarizer = 'local') {
     const pipeline = window.browserML?.pipeline;
     if (!pipeline?.analysis) throw new Error('Analysis service unavailable');
+    if (summarizer === 'external') {
+        await startExternalClusterLabelHandoff([Number(clusterId)]);
+        return '';
+    }
     const result = await pipeline.analysis.summarizeCluster({
         cluster_id: clusterId,
         summarizer,
@@ -801,9 +894,30 @@ async function aiLabelCluster(clusterId, summarizer = 'local') {
  */
 async function aiLabelSingleCluster(clusterId, summarizer) {
     const mode = summarizer || getSummarizerMode();
+    if (mode === 'external') {
+        const availability = getClusterLabelAvailability();
+        if (!availability.externalReady) throw new Error(availability.externalReason);
+    }
     emitLabelProgress({ phase: 'start', index: 0, total: 1, cluster_id: clusterId });
     try {
-        const label = await aiLabelCluster(clusterId, mode);
+        const pipeline = window.browserML?.pipeline;
+        if (mode === 'local' && !pipeline?.rag) {
+            throw new Error('Local AI models are not set up. Download them before labelling clusters.');
+        }
+        const result = mode === 'local'
+            ? await pipeline.analysis.summarizeCluster({
+                cluster_id: clusterId,
+                summarizer: 'local',
+                persist_label: true,
+                onStatus: (status, progress) => {
+                    if (status === 'loading-model' || status === 'model-progress') {
+                        emitLabelProgress({ phase: 'model-loading', index: 0, total: 1, progress });
+                    }
+                }
+            })
+            : null;
+        const label = mode === 'local' ? (result?.label || '') : await aiLabelCluster(clusterId, mode);
+        if (mode === 'external') return '';
         emitLabelProgress({ phase: 'tick', index: 1, total: 1, cluster_id: clusterId, label });
         emitLabelProgress({ phase: 'done', index: 1, total: 1, labelled: label ? 1 : 0 });
         return label;
@@ -820,53 +934,197 @@ async function aiLabelSingleCluster(clusterId, summarizer) {
  */
 async function aiLabelAllClusters(summarizer) {
     const mode = summarizer || getSummarizerMode();
+    if (mode === 'external') {
+        const availability = getClusterLabelAvailability();
+        if (!availability.externalReady) throw new Error(availability.externalReason);
+    }
     const pipeline = window.browserML?.pipeline;
     if (!pipeline?.currentDataset) throw new Error('No dataset loaded');
     const clusters = pipeline.currentDataset.clusters || [];
     const unique = [...new Set(clusters)].filter(c => c !== -1).sort((a, b) => a - b);
+    const datasetRef = pipeline.currentDataset;
+    const datasetId = pipeline.currentDatasetId || datasetRef.id || null;
 
     _cancelClusterLabelling = false;
     let labelled = 0;
     let processed = 0;
+    let failed = 0;
     emitLabelProgress({ phase: 'start', index: 0, total: unique.length });
 
-    for (const cid of unique) {
-        if (_cancelClusterLabelling) {
-            emitLabelProgress({ phase: 'cancelled', index: processed, total: unique.length, labelled });
-            return { labelled, total: unique.length, cancelled: true };
-        }
-        try {
-            const res = await pipeline.analysis.summarizeCluster({
-                cluster_id: cid,
-                summarizer: mode,
-                persist_label: true
-            });
-            if (res?.label) labelled++;
-            processed++;
-            emitLabelProgress({
-                phase: 'tick', index: processed, total: unique.length,
-                cluster_id: cid, label: res?.label || null
-            });
-        } catch (e) {
-            processed++;
-            console.warn(`Cluster ${cid} labelling failed:`, e.message);
-            emitLabelProgress({
-                phase: 'tick', index: processed, total: unique.length,
-                cluster_id: cid, error: e.message
-            });
-        }
+    if (!unique.length) {
+        emitLabelProgress({ phase: 'empty', index: 0, total: 0, labelled: 0 });
+        return { labelled: 0, total: 0, empty: true };
     }
-    emitLabelProgress({ phase: 'done', index: processed, total: unique.length, labelled });
-    return { labelled, total: unique.length };
+
+    if (mode === 'external') {
+        return aiLabelAllClustersExternal(unique);
+    }
+
+    if (!pipeline.rag) throw new Error('Local AI models are not set up. Download them before labelling clusters.');
+    const operationToken = pipeline.rag.beginOperation('cluster-label', { datasetId });
+
+    try {
+        for (const cid of unique) {
+            if (_cancelClusterLabelling || pipeline.rag.shouldAbort) {
+                emitLabelProgress({ phase: 'cancelled', index: processed, total: unique.length, labelled });
+                return { labelled, total: unique.length, cancelled: true, failed };
+            }
+            if (pipeline.currentDataset !== datasetRef
+                || String(pipeline.currentDatasetId || '') !== String(datasetId || '')) {
+                throw new Error('The active dataset changed while clusters were being labelled.');
+            }
+            try {
+                const res = await pipeline.analysis.summarizeCluster({
+                    cluster_id: cid,
+                    summarizer: mode,
+                    persist_label: true,
+                    operationToken,
+                    onStatus: (status, progress) => {
+                        if (status === 'loading-model' || status === 'model-progress') {
+                            emitLabelProgress({ phase: 'model-loading', index: processed, total: unique.length, progress });
+                        }
+                    }
+                });
+                if (res?.label) labelled++;
+                processed++;
+                emitLabelProgress({
+                    phase: 'tick', index: processed, total: unique.length,
+                    cluster_id: cid, label: res?.label || null
+                });
+            } catch (e) {
+                if (_cancelClusterLabelling || pipeline.rag.shouldAbort) {
+                    emitLabelProgress({ phase: 'cancelled', index: processed, total: unique.length, labelled });
+                    return { labelled, total: unique.length, cancelled: true, failed };
+                }
+                processed++;
+                failed++;
+                console.warn(`Cluster ${cid} labelling failed:`, e.message);
+                emitLabelProgress({
+                    phase: 'tick', index: processed, total: unique.length,
+                    cluster_id: cid, error: e.message
+                });
+            }
+        }
+        emitLabelProgress({ phase: 'done', index: processed, total: unique.length, labelled, failed });
+        return { labelled, total: unique.length, failed };
+    } finally {
+        pipeline.rag.endOperation(operationToken);
+    }
 }
 
 function getSummarizerMode() {
-    // External (MCP AI) labelling is AI-initiated only: the connected MCP client
-    // calls summarize_cluster + set_cluster_label over the live bridge. The in-page
-    // button cannot push work to the external AI, so it always uses the local model.
-    // (Labels set by the external AI still arrive via vectoria:cluster-labels-changed.)
+    const selected = document.querySelector('input[name="cluster-summarizer-mode"]:checked')?.value
+        || document.getElementById('cluster-summarizer-quick')?.value;
+    if (selected === 'external' || window.__vectoriaGenerationMode === 'external') return 'external';
     return 'local';
 }
+
+function getClusterLabelAvailability() {
+    const state = window.vectoriaMCP?.state || window.__vectoriaMCPState || {};
+    let bridgeEnabled = false;
+    try {
+        bridgeEnabled = localStorage.getItem('vectoria_mcp_enabled') === 'true';
+    } catch (_) {}
+
+    const connected = state.connected === true && window.__mcpBridgeConnected === true;
+    const compatible = state.compatible !== false;
+    const externalReady = bridgeEnabled && connected && compatible;
+    let externalReason = '';
+    if (!bridgeEnabled) {
+        externalReason = 'Enable MCP Bridge in Settings → Integrations first.';
+    } else if (!compatible) {
+        externalReason = 'The local MCP relay is outdated. Reinstall Vectoria MCP and restart your AI client.';
+    } else if (!connected) {
+        externalReason = 'Open or restart an MCP-compatible AI client and wait for Vectoria to show Connected.';
+    }
+
+    const pipeline = window.browserML?.pipeline;
+    const active = pipeline?.rag?.activeOperation || null;
+    const localConfigured = window.browserML?.isReady === true && Boolean(pipeline?.rag);
+    const localMode = window.__vectoriaGenerationMode !== 'external';
+    const localReady = localMode && localConfigured && !pipeline?.isProcessing && !active;
+    let localReason = '';
+    if (!localMode) {
+        localReason = 'Switch the answer workflow to Local browser model to use local AI labelling.';
+    } else if (!localConfigured) {
+        localReason = 'Download the local AI models before labelling clusters.';
+    } else if (pipeline?.isProcessing) {
+        localReason = 'Wait for data processing to finish before labelling clusters.';
+    } else if (active) {
+        localReason = `Local AI is currently ${pipeline.rag._operationLabel(active.owner)}.`;
+    }
+
+    return {
+        bridgeEnabled,
+        connected,
+        compatible,
+        externalReady,
+        externalReason,
+        localReady,
+        localReason
+    };
+}
+
+function getAIClientDisplayName() {
+    const name = String(window.vectoriaMCP?.state?.clientName || '').trim();
+    if (!name) return 'your AI client';
+    return name
+        .replace(/[-_]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .split(' ')
+        .map(word => /^(ai|mcp|api|llm)$/i.test(word)
+            ? word.toUpperCase()
+            : word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+async function aiLabelAllClustersExternal(clusterIds) {
+    return startExternalClusterLabelHandoff(clusterIds);
+}
+
+async function startExternalClusterLabelHandoff(clusterIds) {
+    const availability = getClusterLabelAvailability();
+    if (!availability.externalReady) {
+        throw new Error(availability.externalReason || 'Connect an MCP-compatible AI client before using AI client labelling.');
+    }
+    const clientName = getAIClientDisplayName();
+    const instruction = `Use Vectoria MCP to label clusters ${clusterIds.join(', ')}. For each cluster, call summarize_cluster with summarizer="external", create a concise 3-5 word label from its exemplars and keywords, then call set_cluster_label. Do not label cluster -1. Report any failures.`;
+    let copied = false;
+    try {
+        await navigator.clipboard.writeText(instruction);
+        copied = true;
+    } catch (_) {
+        window.prompt(`Copy this instruction, then paste and send it in ${clientName}:`, instruction);
+    }
+    window.lastClusterLabelInstruction = instruction;
+    const pipeline = window.browserML?.pipeline;
+    _externalHandoffState = {
+        ids: new Set(clusterIds.map(Number)),
+        received: new Set(),
+        clientName,
+        datasetId: String(pipeline?.currentDatasetId || pipeline?.currentDataset?.id || ''),
+        invalidated: false
+    };
+    emitLabelProgress({ phase: 'handoff', index: 0, total: clusterIds.length, clientName, connected: true, copied });
+    return { labelled: 0, total: clusterIds.length, handoff: true };
+}
+
+var _externalHandoffState = null;
+
+window.validateExternalClusterLabelTarget = (clusterId) => {
+    if (!_externalHandoffState || !_externalHandoffState.ids.has(Number(clusterId))) {
+        return { ok: true };
+    }
+    const pipeline = window.browserML?.pipeline;
+    const currentDatasetId = String(pipeline?.currentDatasetId || pipeline?.currentDataset?.id || '');
+    if (_externalHandoffState.invalidated || currentDatasetId !== _externalHandoffState.datasetId) {
+        return {
+            ok: false,
+            error: 'The dataset changed after this cluster-labelling handoff started. Start a new handoff for the active dataset.'
+        };
+    }
+    return { ok: true };
+};
 
 window.aiLabelCluster = aiLabelCluster;
 window.aiLabelSingleCluster = aiLabelSingleCluster;
@@ -875,12 +1133,40 @@ window.getSummarizerMode = getSummarizerMode;
 
 // React to AI-driven cluster label updates (from MCP set_cluster_label, etc.)
 document.addEventListener('vectoria:cluster-labels-changed', (e) => {
-    const { cluster_id, label } = e.detail || {};
+    const { cluster_id, label, source } = e.detail || {};
     if (cluster_id !== undefined && label) {
         customClusterNames.set(Number(cluster_id), label);
-        try { saveCustomClusterNames(); } catch (_) {}
+        clusterLabelProvenance.set(Number(cluster_id), { source: source || 'mcp', updated_at: Date.now() });
+    }
+    if (_externalHandoffState && source !== 'manual' && _externalHandoffState.ids.has(Number(cluster_id))) {
+        _externalHandoffState.received.add(Number(cluster_id));
+        const total = _externalHandoffState.ids.size;
+        const index = _externalHandoffState.received.size;
+        const clientName = _externalHandoffState.clientName;
+        emitLabelProgress({ phase: 'tick', index, total, cluster_id, label, handoff: true, clientName });
+        if (index >= total) {
+            emitLabelProgress({ phase: 'done', index, total, labelled: index, handoff: true, clientName });
+            _externalHandoffState = null;
+        }
     }
     refreshClusterDisplays();
+});
+
+document.addEventListener('vectoria:dataset-changed', () => {
+    const pipeline = window.browserML?.pipeline;
+    if (pipeline?.rag?.activeOperation?.owner === 'cluster-label') {
+        _cancelClusterLabelling = true;
+        pipeline.abortRAG?.('cluster-label');
+    }
+    if (_externalHandoffState) {
+        _externalHandoffState.invalidated = true;
+        emitLabelProgress({
+            phase: 'error',
+            index: _externalHandoffState.received.size,
+            total: _externalHandoffState.ids.size,
+            error: 'Dataset changed; cluster-label handoff cancelled.'
+        });
+    }
 });
 
 function refreshClusterDisplays() {
@@ -900,9 +1186,12 @@ function refreshClusterDisplays() {
         updateMetadataUI();
     }
 
-    // Refresh visualization labels (if renderer has method)
-    if (window.renderer && typeof window.renderer.updateClusterLabels === 'function') {
-        window.renderer.updateClusterLabels();
+    // Refresh the active visualization immediately after manual or AI labels change.
+    const visualizations = new Set([window.mainVisualization, window.renderer].filter(Boolean));
+    for (const visualization of visualizations) {
+        if (typeof visualization.updateClusterLabels === 'function') {
+            visualization.updateClusterLabels();
+        }
     }
 }
 
@@ -994,7 +1283,6 @@ function filterByCluster(clusterId) {
 // Main initialization function
 document.addEventListener('DOMContentLoaded', function() {
     initThemeToggle();
-    loadCustomClusterNames();
 
     // Setup bidirectional config sync between duplicate controls
     setupConfigSync();
@@ -1010,7 +1298,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const sr = document.getElementById('search-results');
         if (sr) sr.style.display = 'none';
     } catch(e) { /* no-op */ }
-    
+
     // Initialize tab navigation
     initTabNavigation();
     
@@ -1053,23 +1341,18 @@ document.addEventListener('DOMContentLoaded', function() {
     setupFilterStatusBar();
 
     document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') {
-            const filtersActive = activeMetadataFilters && Object.keys(activeMetadataFilters).length > 0;
-            const searchActive = window.__textListLock === 'lasso' || (window.currentSearchResults && Array.isArray(window.currentSearchResults.results) && window.currentSearchResults.results.length > 0);
-            if (!filtersActive && !searchActive) {
-                return;
-            }
+        if (event.key !== 'Escape' || event.defaultPrevented) return;
+        const activeModal = [...document.querySelectorAll('[aria-modal="true"]')].some((modal) => (
+            !modal.hidden && modal.style.display !== 'none' && window.getComputedStyle(modal).display !== 'none'
+        ));
+        if (activeModal) return;
 
-            if (filtersActive && typeof clearMetadataFilters === 'function') {
-                clearMetadataFilters();
-            }
-
-            if (searchActive && typeof clearSearch === 'function') {
-                clearSearch();
-            }
-
-            event.preventDefault();
-        }
+        const consumed = window.VectoriaChat?.closeTopSurface?.()
+            || window.VectoriaWorkspace?.handleEscape?.()
+            || window.mainVisualization?.cancelActiveTool?.();
+        if (!consumed) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
     });
 
     // Lightweight scroll performance toggle to reduce heavy effects during scroll
@@ -1165,16 +1448,15 @@ function activateTab(tabId) {
     }
     if (targetContent) {
         targetContent.classList.add('active');
-        targetContent.style.display = 'block';
+        targetContent.style.display = tabId === 'explore-tab' ? 'flex' : 'block';
     }
     
-    // Always enable scrolling when leaving upload initial view
-    if (tabId === 'explore-tab') {
-        document.body.classList.add('upload-scrollable');
-    }
+    document.body.classList.toggle('explore-workbench-active', tabId === 'explore-tab');
+    document.body.classList.toggle('upload-scrollable', tabId !== 'explore-tab');
 
     // Load data for the explore tab even if no button exists
     if (tabId === 'explore-tab') {
+        window.VectoriaWorkspace?.refreshLayout?.();
         try { loadVisualizationData(); } catch (e) { console.error(e); }
 
         // IMPORTANT: Attach filter button handlers when explore tab becomes visible
@@ -1455,12 +1737,15 @@ function initCSVUpload() {
             document.getElementById('processing-loader').style.display = 'none';
             
             // Show success message
+            const processedRows = Number(data.rows ?? data.num_documents);
+            const generatedChunks = Number(data.num_chunks);
+            const processingSeconds = Number(data.processing_time);
             processingSuccess.innerHTML = `
                 <strong>Processing completed successfully!</strong><br>
-                • Processed ${data.rows || data.num_documents || 0} rows using column: <strong>${escapeHtml(data.text_column || 'text')}</strong><br>
-                • Generated ${data.num_chunks || 0} text chunks<br>
+                • Processed ${Number.isFinite(processedRows) ? Math.max(0, processedRows) : 0} rows using column: <strong>${escapeHtml(data.text_column || 'text')}</strong><br>
+                • Generated ${Number.isFinite(generatedChunks) ? Math.max(0, generatedChunks) : 0} text chunks<br>
                 • Created ${data.has_visualization ? 'interactive visualization' : 'embeddings only'}<br>
-                ${data.processing_time ? `• Processing time: ${data.processing_time.toFixed(2)}s` : ''}
+                ${Number.isFinite(processingSeconds) && processingSeconds > 0 ? `• Processing time: ${processingSeconds.toFixed(2)}s` : ''}
             `;
             processingSuccess.style.display = 'block';
             
@@ -1476,10 +1761,6 @@ function initCSVUpload() {
             // Clear current visualization data to force reload
             currentVisualizationData = null;
             window.currentVisualizationData = null;
-
-            // Clear custom cluster names from previous dataset
-            customClusterNames.clear();
-            saveCustomClusterNames();
 
             // Show processing summary modal then transition to Explore
             showProcessingSummaryModal(data);
@@ -1515,20 +1796,24 @@ function showProcessingSummaryModal(data) {
 
     // Debug: Log the data to see what we're receiving
     // Extract data with fallbacks
-    const numDocuments = data.numDocuments || data.num_documents || data.rows || '—';
-    const numClusters = data.numClusters || data.num_clusters || '—';
-    const emptyRowCount = data.emptyRowCount || 0;
-    const duplicateCount = data.duplicateCount || data.duplicatesRemoved || 0;
+    const finiteOr = (value, fallback = 0) => {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : fallback;
+    };
+    const numDocuments = finiteOr(data.numDocuments ?? data.num_documents ?? data.rows, '—');
+    const numClusters = finiteOr(data.numClusters ?? data.num_clusters, '—');
+    const emptyRowCount = Math.max(0, finiteOr(data.emptyRowCount, 0));
+    const duplicateCount = Math.max(0, finiteOr(data.duplicateCount ?? data.duplicatesRemoved, 0));
     const fileName = data.fileName || data.filename || '—';
     const textCol = data.textColumn || data.text_column || '—';
     
     // Extract timing data
     const timings = data.timings || {};
-    const totalTime = timings.total || data.processing_time || 0;
-    const embeddingTime = timings.embedding || 0;
-    const umapTime = timings.umap || 0;
-    const clusteringTime = timings.clustering || 0;
-    const indexingTime = timings.indexing || 0;
+    const totalTime = Math.max(0, finiteOr(timings.total ?? data.processing_time, 0));
+    const embeddingTime = Math.max(0, finiteOr(timings.embedding, 0));
+    const umapTime = Math.max(0, finiteOr(timings.umap, 0));
+    const clusteringTime = Math.max(0, finiteOr(timings.clustering, 0));
+    const indexingTime = Math.max(0, finiteOr(timings.indexing, 0));
     
     const timingValue = (value) => (value > 0 ? `${value.toFixed(2)}s` : '—');
 
@@ -1649,6 +1934,7 @@ function showProcessingSummaryModal(data) {
     `;
 
     // Open modal with animation
+    clearVisualizationTransientState();
     modal.style.display = 'flex';
     document.body.classList.add('modal-open');
     setTimeout(() => modal.classList.add('modal-visible'), 10);
@@ -1913,8 +2199,9 @@ function initDataExploration() {
     // This will be called when the explore tab is activated
 }
 
-// Function to load visualization data
-function loadVisualizationData() {
+// Legacy backend loader retained for compatibility/debugging. The active
+// WebGL loader is declared later in this file.
+function loadLegacyVisualizationData() {
     if (currentVisualizationData) {
         initializeVisualization(currentVisualizationData);
         return;
@@ -1992,6 +2279,86 @@ function initializeVisualization(data) {
     }
 }
 
+const TEXT_LIST_BATCH_SIZE = 100;
+let textListDisplayedCount = 0;
+let textListObserver = null;
+let textListDelegationReady = false;
+
+function announceTextListCount() {
+    const total = window.__currentTextListPoints?.length || 0;
+    const displayed = Math.min(textListDisplayedCount, total);
+    const live = document.getElementById('workspace-live-status');
+    if (live) live.textContent = `Showing ${displayed.toLocaleString()} of ${total.toLocaleString()} documents`;
+}
+
+function setupTextListDelegation(container) {
+    if (textListDelegationReady) return;
+    textListDelegationReady = true;
+    const activateRow = (event) => {
+        const item = event.target.closest('.text-item');
+        if (!item || !container.contains(item)) return;
+        const listIndex = Number(item.dataset.listIndex);
+        const point = window.__currentTextListPoints?.[listIndex];
+        if (!point) return;
+        const badge = event.target.closest('.cluster-badge-filter');
+        if (badge) {
+            event.stopPropagation();
+            filterByCluster(point.cluster);
+            return;
+        }
+        showTextDetails(point, Number(item.dataset.index));
+    };
+    container.addEventListener('click', activateRow);
+    container.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        if (!event.target.closest('.text-item')) return;
+        event.preventDefault();
+        activateRow(event);
+    });
+    document.getElementById('text-list-load-more')?.addEventListener('click', renderNextTextListBatch);
+}
+
+function renderNextTextListBatch() {
+    const container = document.getElementById('text-list');
+    const points = window.__currentTextListPoints || [];
+    if (!container || textListDisplayedCount >= points.length) return;
+    container.setAttribute('aria-busy', 'true');
+    try {
+        container.querySelector('#text-list-sentinel')?.remove();
+        const end = Math.min(points.length, textListDisplayedCount + TEXT_LIST_BATCH_SIZE);
+        const fragment = document.createDocumentFragment();
+        for (let index = textListDisplayedCount; index < end; index += 1) {
+            fragment.appendChild(renderTextListItem(points[index], index));
+        }
+        textListDisplayedCount = end;
+        container.appendChild(fragment);
+
+        const pagination = document.getElementById('text-list-pagination');
+        const hasMore = textListDisplayedCount < points.length;
+        // IntersectionObserver advances the list automatically. The button is
+        // only exposed as a keyboard-safe fallback when observers are absent.
+        if (pagination) pagination.hidden = !hasMore || Boolean(textListObserver);
+        if (hasMore) {
+            const sentinel = document.createElement('span');
+            sentinel.id = 'text-list-sentinel';
+            sentinel.setAttribute('aria-hidden', 'true');
+            container.appendChild(sentinel);
+            textListObserver?.observe(sentinel);
+        }
+        announceTextListCount();
+    } finally {
+        container.setAttribute('aria-busy', 'false');
+    }
+}
+
+function setupTextListObserver(container) {
+    textListObserver?.disconnect();
+    if (!('IntersectionObserver' in window)) return;
+    textListObserver = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) renderNextTextListBatch();
+    }, { root: container, rootMargin: '160px 0px' });
+}
+
 // Function to update text list
 function updateTextList(points, options = {}) {
     const { force = false } = options;
@@ -2011,14 +2378,12 @@ function updateTextList(points, options = {}) {
     // Update export button visibility (only shown for full unfiltered dataset)
     updateExportButtonVisibility();
 
-    // Render all items directly for smooth native scrolling
-    const fragment = document.createDocumentFragment();
-    points.forEach((point, index) => {
-        const el = renderTextListItem(point, index);
-        fragment.appendChild(el);
-    });
     container.innerHTML = '';
-    container.appendChild(fragment);
+    container.scrollTop = 0;
+    textListDisplayedCount = 0;
+    setupTextListDelegation(container);
+    setupTextListObserver(container);
+    renderNextTextListBatch();
 }
 
 function updateTextContentCount(count) {
@@ -2037,6 +2402,7 @@ function renderTextListItem(point, index) {
     const originalIndex = (typeof point.index === 'number') ? point.index : index;
     item.dataset.index = originalIndex;
     item.dataset.listIndex = index;
+    item.dataset.clusterId = point.cluster;
 
     const clusterColor = ensureConsistentColor(point.cluster, point.cluster_color, point.cluster_name);
     const clusterBadgeColor = applyAlphaToColor(clusterColor, 0.18);
@@ -2064,7 +2430,7 @@ function renderTextListItem(point, index) {
             <span class="text-item-number">Item ${index + 1}</span>
             <span class="text-item-cluster cluster-badge-filter"
                   data-cluster-id="${clusterId}"
-                  style="background-color: ${clusterBadgeColor}; color: ${clusterColor}; border: 1px solid ${clusterColor}; cursor: pointer;"
+                  style="--cluster-color: ${clusterColor}; --cluster-tint: ${clusterBadgeColor}; cursor: pointer;"
                   title="Click to filter by this cluster">
                 ${escapeHtml(clusterName)}${escapeHtml(keywordText)}
             </span>
@@ -2075,25 +2441,6 @@ function renderTextListItem(point, index) {
         ${metadataPreviewHtml}
     `;
 
-    // Add click handler for cluster badge to filter by cluster
-    const clusterBadge = item.querySelector('.cluster-badge-filter');
-    if (clusterBadge) {
-        clusterBadge.addEventListener('click', (e) => {
-            e.stopPropagation();
-            filterByCluster(clusterId);
-        });
-    }
-
-    // Use event delegation for better performance - attach to container
-    const openDetails = () => showTextDetails(point, originalIndex);
-    item.addEventListener('click', openDetails, { passive: true });
-    item.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            openDetails();
-        }
-    });
-    
     return item;
 }
 
@@ -2106,12 +2453,14 @@ function showTextDetails(point, index, options = {}) {
         focusVisualization = true
     } = options;
     const textList = document.getElementById('text-list');
+    const pagination = document.getElementById('text-list-pagination');
     const selectedTextView = document.getElementById('selected-text-view');
     const selectedTextContent = document.getElementById('selected-text-content');
     const previousScrollTop = preserveScroll && selectedTextView ? selectedTextView.scrollTop : 0;
     
     // Hide list and show details
     textList.style.display = 'none';
+    if (pagination) pagination.hidden = true;
     selectedTextView.style.display = 'block';
     updateExportButtonVisibility();
 
@@ -2192,9 +2541,9 @@ function formatAllMetadata(point) {
     let metadataItems = '';
     entries.forEach((entry, idx) => {
         metadataItems += `
-            <div class="metadata-item metadata-item-reorderable" data-metadata-key="${entry.key}">
+            <div class="metadata-item metadata-item-reorderable" data-metadata-key="${escapeHtml(entry.key)}">
                 <div class="metadata-item-header">
-                    <span class="metadata-label">${entry.label}</span>
+                    <span class="metadata-label">${escapeHtml(entry.label)}</span>
                     <span class="metadata-drag-handle" title="Drag to reorder">
                         <i class="fas fa-grip-lines"></i>
                     </span>
@@ -2305,8 +2654,8 @@ function buildMetadataPreviewItems(point) {
     if (!entries.length) return '';
     
     return entries.map((entry) => `
-        <div class="metadata-chip" data-metadata-key="${entry.key}">
-            <span class="metadata-chip-key">${entry.label}</span>
+        <div class="metadata-chip" data-metadata-key="${escapeHtml(entry.key)}">
+            <span class="metadata-chip-key">${escapeHtml(entry.label)}</span>
             <span class="metadata-chip-value">${entry.previewValue}</span>
         </div>
     `).join('');
@@ -2388,7 +2737,7 @@ function formatMetadataValue(value) {
     }
     
     // Fallback
-    return `<span class="unknown-value">${String(value)}</span>`;
+    return `<span class="unknown-value">${escapeHtml(String(value))}</span>`;
 }
 
 function formatMetadataPreviewValue(value) {
@@ -2425,11 +2774,24 @@ function formatMetadataPreviewValue(value) {
     return escapeHtml(displayValue);
 }
 
+/**
+ * Top-priority metadata for a point, in the order the user arranged in the
+ * text detail panel. Shared with the canvas tooltip so hovering a point shows
+ * the same fields, in the same order, as the text list — one source of truth
+ * for priority, read live so a drag reorder applies to the next hover.
+ * Values are already escaped and truncated by formatMetadataPreviewValue.
+ */
+function getMetadataPreviewEntries(point, limit = MAX_METADATA_PREVIEW_ITEMS) {
+    const max = Number.isFinite(limit) && limit > 0 ? limit : MAX_METADATA_PREVIEW_ITEMS;
+    return getSortedMetadataEntries(point)
+        .slice(0, max)
+        .map(({ key, label, previewValue }) => ({ key, label, previewValue }));
+}
+window.getMetadataPreviewEntries = getMetadataPreviewEntries;
+
 // Helper function to escape HTML
 function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    return window.VectoriaDOM?.escapeHTML?.(text) ?? String(text ?? '');
 }
 
 function loadMetadataSortOrder() {
@@ -2710,62 +3072,35 @@ document.addEventListener('DOMContentLoaded', function() {
     const backBtn = document.getElementById('back-to-list-btn');
     if (backBtn) {
         backBtn.addEventListener('click', () => {
+            const returnToChat = window.__returnToChatAfterReader === true;
+            window.__returnToChatAfterReader = false;
             document.getElementById('text-list').style.display = 'block';
             document.getElementById('selected-text-view').style.display = 'none';
+            const pagination = document.getElementById('text-list-pagination');
+            if (pagination) {
+                const total = window.__currentTextListPoints?.length || 0;
+                pagination.hidden = Boolean(textListObserver) || textListDisplayedCount >= total;
+            }
 
             // Clear individual point highlight but preserve search results
             if (window.mainVisualization) {
                 window.mainVisualization.clearIndividualHighlight();
+                window.mainVisualization.clearChatPreview?.();
             }
             updateExportButtonVisibility();
+            if (returnToChat && window.VectoriaChat?.showChat) {
+                window.VectoriaChat.showChat({ restoreScroll: true });
+            }
         });
     }
 });
 
-// ENHANCED search functionality with fast search integration
-let searchTimeout = null;
-
 function initEnhancedSearchFunctionality() {
-    const searchBtn = document.getElementById('search-btn');
-    const searchInput = document.getElementById('search-input');
     const clearBtn = document.getElementById('clear-search');
     
     // Initialize the global search interface
     if (!window.globalSearchInterface) {
         window.globalSearchInterface = new SearchInterface();
-    }
-    
-    if (searchBtn) {
-        searchBtn.addEventListener('click', performSearch);
-    }
-    
-    if (searchInput) {
-        // Only trigger search on Enter key for semantic search
-        // Fast search will be handled by SearchInterface for real-time search
-        searchInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                performSearch();
-            }
-        });
-        
-        // Auto-clear search results when input becomes empty
-        searchInput.addEventListener('keyup', (e) => {
-            const query = e.target.value.trim();
-            if (query === '') {
-                // User cleared the input - automatically clear search results
-                clearSearch();
-            }
-        });
-        
-        // Also handle paste/cut events that might clear the input
-        searchInput.addEventListener('input', (e) => {
-            const query = e.target.value.trim();
-            if (query === '') {
-                // Input was cleared via paste/cut - automatically clear search results
-                clearSearch();
-            }
-        });
     }
     
     if (clearBtn) {
@@ -2780,28 +3115,17 @@ function initEnhancedSearchFunctionality() {
     
 }
 
-function debouncedSearch(delay = 300) {
-    if (searchTimeout) {
-        clearTimeout(searchTimeout);
-    }
-    
-    searchTimeout = setTimeout(() => {
-        performSearch();
-        searchTimeout = null;
-    }, delay);
-}
-
 function clearSearch() {
-    const searchBtn = document.getElementById('search-btn');
-    if (searchBtn && searchBtn.disabled) {
-        return;
-    }
+    // Clear is intentionally available as soon as results appear, including
+    // during the short fast-search completion window.
+    window.searchInProgress = false;
+    lockSearchControls(false);
 
-    // Don't clear the search input - user may want to modify and re-search
-    // const searchInput = document.getElementById('search-input');
-    // if (searchInput) {
-    //     searchInput.value = '';
-    // }
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+        searchInput.value = '';
+        searchInput.focus({ preventScroll: true });
+    }
 
     const searchResults = document.getElementById('search-results');
     if (searchResults) {
@@ -2816,7 +3140,10 @@ function clearSearch() {
         if (window.mainVisualization.lassoMode) {
             window.mainVisualization.toggleLassoMode();
             const lassoBtn = document.getElementById('lasso-select-btn');
-            if (lassoBtn) lassoBtn.classList.remove('active');
+            if (lassoBtn) {
+                lassoBtn.classList.remove('active');
+                lassoBtn.setAttribute('aria-pressed', 'false');
+            }
         } else if (window.mainVisualization.lassoSelectedIndices) {
             window.mainVisualization.clearLassoSelection();
         }
@@ -2824,7 +3151,7 @@ function clearSearch() {
 
     unlockTextList('search cleared');
     if (currentVisualizationData && currentVisualizationData.points) {
-        updateTextList(currentVisualizationData.points, { force: true });
+        updateTextList(filterVisualizationPointsByMetadata(currentVisualizationData.points, activeMetadataFilters), { force: true });
     }
     
     // Hide AI answer card if visible
@@ -2949,7 +3276,7 @@ function performSearch() {
             resultCount = parsed;
         }
     }
-    if (searchType === 'semantic') {
+    if (searchType === 'semantic' || searchType === 'hybrid') {
         const semanticAllowed = [5, 10, 20, 50];
         if (!semanticAllowed.includes(resultCount)) {
             resultCount = 10;
@@ -2981,6 +3308,13 @@ function performSearch() {
     
     if (!query) {
         showToast('Please enter a search query', 'warning');
+        return;
+    }
+
+    // Keep one evidence-linked answer surface. Legacy callers that select RAG
+    // still work, but their question is persisted and rendered in Ask.
+    if (searchType === 'rag' && window.VectoriaChat?.submitQuestion) {
+        void window.VectoriaChat.submitQuestion(query, { scope: 'all' });
         return;
     }
     
@@ -3032,14 +3366,11 @@ function performSearch() {
     const metadataFilters = window.collectMetadataFiltersForSearch ? window.collectMetadataFiltersForSearch() : {};
     const hasActiveFilters = Object.keys(metadataFilters).length > 0;
     
-    if (hasActiveFilters) {
-    }
-    
     // Collect per-search metadata inclusion fields for RAG and semantic search
     let includeMetadata = false;
     let metadataFields = undefined;
     let metadataFieldMode = undefined;
-    if (searchType === 'rag' || searchType === 'semantic') {
+    if (searchType === 'rag' || searchType === 'semantic' || searchType === 'hybrid') {
         const includeBox = document.getElementById('rag-include-metadata');
         const fieldSelect = document.getElementById('rag-metadata-fields');
         includeMetadata = !!(includeBox && includeBox.checked);
@@ -3056,21 +3387,18 @@ function performSearch() {
                 metadataFieldMode = 'custom';
             }
         }
-        
-        if (includeMetadata) {
-            const logFields = Array.isArray(metadataFields) && metadataFields.length > 0 ? metadataFields : 'all available';
-        }
     }
 
+    const ragScope = 'all';
     const basePayload = {
-        metadata_filters: metadataFilters,
+        metadata_filters: searchType === 'rag' ? {} : metadataFilters,
         include_metadata: includeMetadata,
         metadata_fields: metadataFields,
         metadata_field_mode: metadataFieldMode
     };
 
     const requestData = searchType === 'rag' ?
-        { question: query, num_results: ragResultCount, search_type: ragSearchMode, ...basePayload } :
+        { question: query, num_results: ragResultCount, search_type: ragSearchMode, scope: ragScope, ...basePayload } :
         { query: query, search_type: searchType, k: resultCount, ...basePayload };
 
     // Perform search
@@ -3109,8 +3437,8 @@ function performSearch() {
                 highlightSearchResultsInVisualization(data.sources, query);
             }
 
-            const filterNote = hasActiveFilters ? ` (filtered data)` : '';
-            showToast(`RAG response generated with ${data.sources ? data.sources.length : 0} sources${filterNote}`, 'success');
+            const action = data.metadata?.generationProvider === 'mcp_handoff' ? 'RAG handoff prepared' : 'RAG response generated';
+            showToast(`${action} with ${data.sources ? data.sources.length : 0} sources`, 'success');
         } else {
             displaySearchResults(data);
             
@@ -3224,9 +3552,11 @@ function displaySearchResults(data) {
 
     // Update results count for compact view
     if (resultsCount) {
+        const resultNoun = resultsArray.length === 1 ? 'result' : 'results';
+        const itemNoun = resultsArray.length === 1 ? 'item' : 'items';
         let countText = isLasso
-            ? `${resultsArray.length} items selected`
-            : `${resultsArray.length} results found`;
+            ? `${resultsArray.length} ${itemNoun} selected`
+            : `${resultsArray.length} ${resultNoun} found`;
 
         if (!isLasso && !Array.isArray(data) && data?.metadata_filters_applied && Array.isArray(data.active_filters) && data.active_filters.length > 0) {
             countText += ` (${data.active_filters.length} filter${data.active_filters.length > 1 ? 's' : ''} applied)`;
@@ -3258,20 +3588,30 @@ function initializeDownloadButtons() {
 
 // Toast notification function
 function showToast(message, type = 'info') {
-    // Create toast element
+    const normalizedType = ['error', 'warning'].includes(type) ? type : null;
+    if (!normalizedType) return;
+    const key = `${normalizedType}:${String(message)}`;
+    const existing = [...document.querySelectorAll('.toast-notification')]
+        .find(element => element.dataset.toastKey === key);
+    if (existing) return;
+
     const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-    
-    // Add to document
+    toast.className = `toast-notification ${normalizedType}`;
+    toast.dataset.toastKey = key;
+    toast.setAttribute('role', normalizedType === 'error' ? 'alert' : 'status');
+    toast.setAttribute('aria-live', normalizedType === 'error' ? 'assertive' : 'polite');
+    const messageElement = document.createElement('span');
+    messageElement.className = 'toast-message';
+    messageElement.textContent = message;
+    toast.appendChild(messageElement);
     document.body.appendChild(toast);
 
-    // Show and hide
-    setTimeout(() => toast.classList.add('show'), 100);
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    const remove = () => toast.remove();
+    const timer = setTimeout(remove, 3000);
+    toast.addEventListener('click', () => {
+        clearTimeout(timer);
+        remove();
+    }, { once: true });
 }
 
 // No global overlay loader (use button spinner only)
@@ -3453,7 +3793,7 @@ function showSearchResultsInTextList(results, searchType, query, force = false) 
 
         item.innerHTML = `
             <div class="text-item-header">
-                <span class="cluster-indicator" style="background-color: ${clusterColor}; box-shadow: 0 0 0 2px rgba(255,255,255,0.8);"></span>
+                <span class="cluster-indicator" style="background-color: ${clusterColor};"></span>
                 <span class="item-title">${itemTitle}</span>
                 <div class="result-badges">
                     ${displayScore}
@@ -3561,7 +3901,6 @@ function showSearchResultsInTextList(results, searchType, query, force = false) 
 
 function highlightSearchResultsInVisualization(results, query) {
     if (!window.mainVisualization || !results || results.length === 0) {
-        console.warn('Cannot highlight search results: missing visualization or results');
         return;
     }
 
@@ -3692,10 +4031,10 @@ window.setClusterNames = (names) => {
             customClusterNames.set(parseInt(id, 10), name);
         }
     }
-    saveCustomClusterNames();
     refreshClusterDisplays();
 };
 window.performSearch = performSearch;
+window.clearSearch = clearSearch;
 window.unlockTextList = unlockTextList;
 
 // ---------------------------------------------------------------------------
@@ -3707,16 +4046,46 @@ function syncClusterLabelToolbar() {
     const toolbar = document.getElementById('cluster-label-toolbar');
     if (!toolbar) return;
     const hasDataset = !!window.browserML?.pipeline?.currentDataset;
+    const availability = getClusterLabelAvailability();
     toolbar.style.display = hasDataset ? 'flex' : 'none';
 
     const select = document.getElementById('cluster-summarizer-quick');
     if (select) {
-        // External labelling is AI-initiated only (see getSummarizerMode); the in-page
-        // button can't drive the external AI, so drop the option entirely to avoid a
-        // misleading "labelled instantly" no-op.
-        const extOpt = select.querySelector('option[value="external"]');
-        if (extOpt) extOpt.remove();
-        if (select.value === 'external') select.value = 'local';
+        const localOption = select.querySelector('option[value="local"]');
+        const externalOption = select.querySelector('option[value="external"]');
+        if (localOption) {
+            localOption.disabled = !availability.localReady;
+            localOption.title = availability.localReady ? '' : availability.localReason;
+        }
+        if (externalOption) {
+            externalOption.disabled = !availability.externalReady;
+            externalOption.title = availability.externalReady ? '' : availability.externalReason;
+        }
+        if (window.__vectoriaGenerationMode === 'external') {
+            select.value = 'external';
+        } else if (select.value === 'external' && !availability.externalReady) {
+            select.value = 'local';
+        }
+        select.disabled = !availability.localReady && !availability.externalReady;
+        select.title = availability.externalReady
+            ? 'Which AI labels the clusters'
+            : `AI client via MCP unavailable: ${availability.externalReason}`;
+    }
+
+    const allBtn = document.getElementById('cluster-label-all-quick');
+    if (allBtn) {
+        const external = select?.value === 'external' || window.__vectoriaGenerationMode === 'external';
+        const modeReady = external ? availability.externalReady : availability.localReady;
+        const clientName = getAIClientDisplayName();
+        allBtn.innerHTML = external
+            ? `<i class="fas fa-copy"></i> Prepare for ${clientName}`
+            : '<i class="fas fa-wand-magic-sparkles"></i> Label clusters';
+        allBtn.disabled = !hasDataset || !modeReady;
+        allBtn.title = !modeReady
+            ? (external ? availability.externalReason : availability.localReason)
+            : external
+            ? `Copy an instruction to paste and send in ${clientName}`
+            : 'Auto-label all clusters with the local browser model';
     }
 }
 window.syncClusterLabelToolbar = syncClusterLabelToolbar;
@@ -3729,6 +4098,7 @@ function setupClusterLabelControls() {
         select.value = saved;
         select.addEventListener('change', () => {
             try { localStorage.setItem('vectoria_summarizer_mode', select.value); } catch (_) {}
+            syncClusterLabelToolbar();
         });
     }
 
@@ -3743,7 +4113,7 @@ function setupClusterLabelControls() {
             } catch (e) {
                 showToast(`Labelling failed: ${e.message}`, 'error');
             } finally {
-                allBtn.disabled = false;
+                syncClusterLabelToolbar();
             }
         });
     }
@@ -3764,7 +4134,8 @@ function setupClusterLabelControls() {
     document.addEventListener('vectoria:cluster-label-progress', (e) => {
         if (!banner) return;
         const d = e.detail || {};
-        const total = d.total || 1;
+        const rawTotal = Number.isFinite(Number(d.total)) ? Number(d.total) : 0;
+        const total = Math.max(1, rawTotal);
         const pct = total ? Math.round((d.index / total) * 100) : 0;
 
         if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
@@ -3774,22 +4145,57 @@ function setupClusterLabelControls() {
 
         if (d.phase === 'start') {
             show();
+            if (cancelBtn) cancelBtn.title = 'Cancel labelling';
             if (fill) fill.style.width = '0%';
-            if (text) text.textContent = total > 1 ? `Labelling clusters (0/${total})…` : 'Labelling cluster…';
+            if (text) text.textContent = rawTotal > 1 ? `Labelling clusters (0/${rawTotal})…` : 'Labelling cluster…';
+        } else if (d.phase === 'model-loading') {
+            show();
+            if (cancelBtn) cancelBtn.title = 'Cancel labelling';
+            const progressValue = Number(d.progress?.progress);
+            const progressText = Number.isFinite(progressValue) && progressValue > 0
+                ? ` ${Math.round(progressValue > 1 ? progressValue : progressValue * 100)}%`
+                : '';
+            if (text) text.textContent = `Loading cached local AI${progressText}…`;
+        } else if (d.phase === 'handoff') {
+            show();
+            if (cancelBtn) cancelBtn.title = 'Dismiss label tracking';
+            if (fill) fill.style.width = '0%';
+            if (text) {
+                const ready = d.copied === false ? 'Instruction ready' : 'Instruction copied';
+                text.textContent = `${ready} — paste and send it in ${d.clientName || 'your AI client'} · 0/${total} labels received`;
+            }
         } else if (d.phase === 'tick') {
             show();
             if (fill) fill.style.width = `${pct}%`;
             if (text) {
                 const labelPart = d.label ? ` — “${d.label}”` : (d.error ? ' — failed' : '');
-                text.textContent = total > 1
-                    ? `Labelling clusters (${d.index}/${total})${labelPart}`
-                    : `Labelling cluster${labelPart}`;
+                text.textContent = d.handoff
+                    ? `Labels received from ${d.clientName || 'AI client'} (${d.index}/${total})${labelPart}`
+                    : total > 1
+                        ? `Labelling clusters (${d.index}/${total})${labelPart}`
+                        : `Labelling cluster${labelPart}`;
             }
         } else if (d.phase === 'done') {
             if (fill) fill.style.width = '100%';
-            if (text) text.textContent = `Labelled ${d.labelled ?? d.index}/${total} cluster${total === 1 ? '' : 's'}`;
-            showToast(`AI-labelled ${d.labelled ?? d.index}/${total} cluster${total === 1 ? '' : 's'}`, 'success');
+            const failures = Number(d.failed) || 0;
+            if (text) text.textContent = d.handoff
+                ? `Applied ${d.labelled ?? d.index}/${total} labels from ${d.clientName || 'AI client'}`
+                : failures
+                    ? `Labelled ${d.labelled ?? d.index}/${total}; ${failures} failed`
+                    : `Labelled ${d.labelled ?? d.index}/${total} cluster${total === 1 ? '' : 's'}`;
+            showToast(d.handoff
+                ? `Applied ${d.labelled ?? d.index}/${total} cluster labels from ${d.clientName || 'AI client'}`
+                : failures
+                    ? `AI-labelled ${d.labelled ?? d.index}/${total}; ${failures} failed`
+                    : `AI-labelled ${d.labelled ?? d.index}/${total} cluster${total === 1 ? '' : 's'}`,
+                failures ? 'warning' : 'success');
             hideTimer = setTimeout(hide, 1200);
+        } else if (d.phase === 'empty') {
+            if (text) text.textContent = 'No labelable clusters';
+            showToast('No labelable clusters were found; the dataset contains only outliers.', 'info');
+            hideTimer = setTimeout(hide, 1500);
+        } else if (d.phase === 'dismissed') {
+            hide();
         } else if (d.phase === 'cancelled') {
             if (text) text.textContent = `Cancelled at ${d.index}/${total}`;
             showToast(`Cluster labelling cancelled at ${d.index}/${total}`, 'warning');
@@ -3800,8 +4206,12 @@ function setupClusterLabelControls() {
         }
     });
 
+    document.addEventListener('vectoria:local-ai-operation', syncClusterLabelToolbar);
+
     // Keep toolbar in sync with MCP connection + dataset state.
     document.addEventListener('vectoria:mcp-status', syncClusterLabelToolbar);
+    document.addEventListener('vectoria:mcp-state', syncClusterLabelToolbar);
+    document.addEventListener('vectoria:generation-mode-changed', syncClusterLabelToolbar);
     syncClusterLabelToolbar();
 }
 
@@ -3831,6 +4241,7 @@ function openQuickAnalysisModal() {
         showToast(`Analysis failed: ${e.message}`, 'error');
         return;
     }
+    clearVisualizationTransientState();
     modal.style.display = 'flex';
     document.body.classList.add('modal-open');
     requestAnimationFrame(() => modal.classList.add('modal-visible'));
@@ -4142,10 +4553,6 @@ function loadVisualizationData() {
             unlockTextList('data refreshed');
 
             colorCache.clear();
-            
-            // Log cluster consistency info
-            if (data.cluster_info && data.cluster_info.color_consistency) {
-            }
             
             // Ensure color consistency from server data
             if (data.cluster_colors) {
@@ -4465,25 +4872,43 @@ const CHUNKING_STRATEGY_HELP = {
     token: 'Predictable character-sized chunks with configurable overlap.',
     recursive: 'Preserves paragraph, sentence, punctuation, and word boundaries where possible.',
     sentence: 'Builds chunks from complete sentences using configurable boundary delimiters.',
+    semantic: 'Finds topic changes by comparing local sentence-window embeddings.',
+    code: 'Uses a browser Tree-sitter grammar to preserve code structure.',
+    table: 'Splits Markdown or HTML tables while repeating their headers.',
     fast: 'Uses Chonkie WASM boundary detection. Chunk size is measured in UTF-8 bytes.'
 };
 
 function updateChunkingStrategyUI() {
     const strategy = document.getElementById('chunking-strategy')?.value || 'token';
     const sentenceOptions = document.getElementById('chunking-sentence-options');
+    const semanticOptions = document.getElementById('chunking-semantic-options');
+    const codeOptions = document.getElementById('chunking-code-options');
+    const tableOptions = document.getElementById('chunking-table-options');
     const fastOptions = document.getElementById('chunking-fast-options');
+    const tableMode = document.getElementById('table-mode')?.value || 'row';
+    const tableRowsGroup = document.getElementById('table-rows-per-chunk-group');
     const overlapGroup = document.getElementById('chunk-overlap-group');
     const help = document.getElementById('chunking-strategy-help');
     const sizeInput = document.getElementById('chunk-size');
     const sizeHelp = document.getElementById('chunk-size-help');
 
-    if (sentenceOptions) sentenceOptions.style.display = strategy === 'sentence' ? 'block' : 'none';
+    if (sentenceOptions) sentenceOptions.style.display = (strategy === 'sentence' || strategy === 'semantic') ? 'block' : 'none';
+    if (semanticOptions) semanticOptions.style.display = strategy === 'semantic' ? 'block' : 'none';
+    if (codeOptions) codeOptions.style.display = strategy === 'code' ? 'block' : 'none';
+    if (tableOptions) tableOptions.style.display = strategy === 'table' ? 'block' : 'none';
     if (fastOptions) fastOptions.style.display = strategy === 'fast' ? 'block' : 'none';
+    if (tableRowsGroup) tableRowsGroup.style.display = tableMode === 'row' ? '' : 'none';
     if (overlapGroup) overlapGroup.style.display = (strategy === 'token' || strategy === 'sentence') ? '' : 'none';
     if (help) help.textContent = CHUNKING_STRATEGY_HELP[strategy] || CHUNKING_STRATEGY_HELP.token;
-    if (sizeHelp) sizeHelp.textContent = strategy === 'fast'
-        ? 'UTF-8 bytes per chunk (multibyte characters may use more than one byte)'
-        : 'Characters per chunk (~128 tokens at 512 chars)';
+    if (sizeHelp) {
+        if (strategy === 'fast') {
+            sizeHelp.textContent = 'UTF-8 bytes per chunk (multibyte characters may use more than one byte)';
+        } else if (strategy === 'table' && tableMode === 'row') {
+            sizeHelp.textContent = 'Used only when table chunks are sized by characters';
+        } else {
+            sizeHelp.textContent = 'Characters per chunk (~128 tokens at 512 chars)';
+        }
+    }
     if (sizeInput) {
         sizeInput.max = strategy === 'fast' ? '16384' : '4096';
         sizeInput.step = strategy === 'fast' ? '256' : '64';
@@ -4495,29 +4920,13 @@ function setupChunkingStrategyControls() {
     if (!strategySelect || strategySelect.dataset.strategyUiInitialized === 'true') return;
     strategySelect.dataset.strategyUiInitialized = 'true';
     strategySelect.addEventListener('change', updateChunkingStrategyUI);
+    document.getElementById('table-mode')?.addEventListener('change', updateChunkingStrategyUI);
     updateChunkingStrategyUI();
 }
 
 function organizeAdvancedSettings() {
-    const storageHost = document.getElementById('advanced-storage-settings-host');
-    const storageSection = document.getElementById('storage-cache-section');
-    if (storageHost && storageSection && storageSection.parentElement !== storageHost) {
-        storageHost.appendChild(storageSection);
-    }
-
-    const ragHost = document.getElementById('advanced-rag-settings-host');
-    const quickModal = document.getElementById('quick-settings-modal');
-    const ragTabs = quickModal?.querySelector('.qs-tabs');
-    const ragBody = quickModal?.querySelector('.quick-settings-body');
-    if (ragHost && ragTabs && ragTabs.parentElement !== ragHost) ragHost.appendChild(ragTabs);
-    if (ragHost && ragBody && ragBody.parentElement !== ragHost) {
-        ragBody.classList.add('advanced-rag-settings-body');
-        ragHost.appendChild(ragBody);
-    }
-
-    const applyQuick = document.getElementById('apply-quick-settings');
-    if (applyQuick) applyQuick.style.display = 'none';
-
+    // Search & answers now lives directly in the settings shell. Keep this
+    // compatibility initializer because other modules still own its values.
     if (typeof initializeQuickSettingsModal === 'function') {
         initializeQuickSettingsModal();
     }
@@ -4527,14 +4936,27 @@ function selectAdvancedSettingsCategory(category = 'storage') {
     const modal = document.getElementById('advanced-settings-modal');
     if (!modal) return;
 
-    modal.querySelectorAll('.settings-nav-btn').forEach(button => {
-        button.classList.toggle('active', button.dataset.category === category);
+    const buttons = Array.from(modal.querySelectorAll('.settings-nav-btn'));
+    const selectedButton = buttons.find(button => button.dataset.category === category)
+        || buttons.find(button => button.dataset.category === 'storage');
+    const selectedCategory = selectedButton?.dataset.category || 'storage';
+
+    buttons.forEach(button => {
+        const isSelected = button === selectedButton;
+        button.classList.toggle('active', isSelected);
+        button.setAttribute('aria-selected', String(isSelected));
+        button.tabIndex = isSelected ? 0 : -1;
     });
     modal.querySelectorAll('.settings-category').forEach(panel => {
-        panel.classList.toggle('active', panel.dataset.category === category);
+        const isSelected = panel.dataset.category === selectedCategory;
+        panel.classList.toggle('active', isSelected);
+        panel.hidden = !isSelected;
     });
 
-    if (category === 'rag' && typeof window.loadQuickSettingsFromStorage === 'function') {
+    const content = modal.querySelector('.settings-content');
+    if (content) content.scrollTop = 0;
+
+    if (selectedCategory === 'rag' && typeof window.loadQuickSettingsFromStorage === 'function') {
         window.loadQuickSettingsFromStorage();
     }
 }
@@ -4548,23 +4970,36 @@ function initializeSettingsUI() {
     organizeAdvancedSettings();
 
     // Initialize settings navigation
-    const settingsNavBtns = document.querySelectorAll('.settings-nav-btn');
-    const settingsCategories = document.querySelectorAll('.settings-category');
+    const settingsNavBtns = Array.from(document.querySelectorAll('.settings-nav-btn'));
     
     settingsNavBtns.forEach(btn => {
         btn.addEventListener('click', () => {
-            const category = btn.getAttribute('data-category');
-            
-            // Update active nav button
-            settingsNavBtns.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            
-            // Update active settings category
-            settingsCategories.forEach(cat => cat.classList.remove('active'));
-            document.querySelectorAll(`.settings-category[data-category="${category}"]`)
-                .forEach(targetCategory => targetCategory.classList.add('active'));
+            selectAdvancedSettingsCategory(btn.dataset.category);
+        });
+
+        btn.addEventListener('keydown', event => {
+            const currentIndex = settingsNavBtns.indexOf(btn);
+            let nextIndex = null;
+            if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+                nextIndex = (currentIndex + 1) % settingsNavBtns.length;
+            } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+                nextIndex = (currentIndex - 1 + settingsNavBtns.length) % settingsNavBtns.length;
+            } else if (event.key === 'Home') {
+                nextIndex = 0;
+            } else if (event.key === 'End') {
+                nextIndex = settingsNavBtns.length - 1;
+            }
+
+            if (nextIndex !== null) {
+                event.preventDefault();
+                const nextButton = settingsNavBtns[nextIndex];
+                selectAdvancedSettingsCategory(nextButton.dataset.category);
+                nextButton.focus();
+            }
         });
     });
+
+    selectAdvancedSettingsCategory('storage');
 
     setupChunkingStrategyControls();
     
@@ -4593,11 +5028,7 @@ function initializeSettingsUI() {
     });
     
     // Initialize settings action buttons
-    const saveBtn = document.getElementById('save-settings-btn');
     const resetBtn = document.getElementById('reset-settings-btn');
-    if (saveBtn) {
-        saveBtn.addEventListener('click', saveConfiguration);
-    }
     
     if (resetBtn) {
         resetBtn.addEventListener('click', resetConfiguration);
@@ -4669,16 +5100,12 @@ async function autoSaveConfiguration() {
 }
 
 function showAutoSaveIndicator() {
-    // Show a subtle "Saved" indicator briefly
-    const saveBtn = document.getElementById('save-settings-btn');
-    if (saveBtn) {
-        const originalText = saveBtn.innerHTML;
-        saveBtn.innerHTML = '<i class="fas fa-check"></i> Saved';
-        saveBtn.style.background = 'var(--success-color)';
-        
+    const label = document.querySelector('#advanced-settings-modal .settings-autosave-label');
+    if (label) {
+        const originalText = label.innerHTML;
+        label.innerHTML = '<i class="fas fa-check-circle" aria-hidden="true"></i> Saved';
         setTimeout(() => {
-            saveBtn.innerHTML = originalText;
-            saveBtn.style.background = '';
+            label.innerHTML = originalText;
         }, 1500);
     }
 }
@@ -4686,11 +5113,13 @@ function showAutoSaveIndicator() {
 // Configuration management functions
 async function saveConfiguration() {
     const saveBtn = document.getElementById('save-settings-btn');
-    const originalText = saveBtn.textContent;
+    const originalText = saveBtn?.textContent || '';
 
     try {
-        saveBtn.textContent = 'Saving...';
-        saveBtn.disabled = true;
+        if (saveBtn) {
+            saveBtn.textContent = 'Saving...';
+            saveBtn.disabled = true;
+        }
 
         const config = collectConfigurationData();
 
@@ -4711,8 +5140,10 @@ async function saveConfiguration() {
         console.error('Error saving configuration:', error);
         showToast(`Failed to save configuration: ${error.message}`, 'error');
     } finally {
-        saveBtn.textContent = originalText;
-        saveBtn.disabled = false;
+        if (saveBtn) {
+            saveBtn.textContent = originalText;
+            saveBtn.disabled = false;
+        }
     }
 }
 
@@ -4720,6 +5151,7 @@ function resetConfiguration() {
     const modal = document.getElementById('reset-settings-modal');
     if (!modal) return;
 
+    clearVisualizationTransientState();
     modal.style.display = 'flex';
 
     const closeModal = () => {
@@ -4742,6 +5174,7 @@ function resetConfiguration() {
                     embeddings: { ...defaults.embeddings },
                     chunking: { ...defaults.chunking },
                     rag_prompts: { ...defaults.rag_prompts },
+                    chat: { ...defaults.chat },
                     search: { ...defaults.search },
                     clustering: { ...defaults.clustering },
                     visualization: { ...defaults.visualization },
@@ -4809,66 +5242,27 @@ function setupConfigSync() {
             }
         }
 
-        // Sync Advanced Settings modal controls
-        const advancedModal = document.getElementById('advanced-settings-modal');
-        if (advancedModal) {
-            // Sync LLM settings
-            const tempInput = document.getElementById('temperature');
-            if (tempInput && newConfig.llm?.temperature !== undefined) {
-                tempInput.value = newConfig.llm.temperature;
-            }
-
-            const maxTokensInput = document.getElementById('max-tokens');
-            if (maxTokensInput && newConfig.llm?.max_tokens !== undefined) {
-                maxTokensInput.value = newConfig.llm.max_tokens;
-            }
-
-            // Sync RAG/Search settings in Advanced modal
-            const vectorWeightInput = document.getElementById('vector-weight');
-            if (vectorWeightInput && newConfig.search?.vector_weight !== undefined) {
-                vectorWeightInput.value = newConfig.search.vector_weight * 100;
-            }
-
-            const retrievalKInput = document.getElementById('rag-retrieval-k');
-            if (retrievalKInput && newConfig.search?.retrieval_k !== undefined) {
-                retrievalKInput.value = newConfig.search.retrieval_k;
-            }
-
-            const numResultsInput = document.getElementById('rag-num-results');
-            if (numResultsInput && newConfig.search?.num_results !== undefined) {
-                numResultsInput.value = newConfig.search.num_results;
-            }
-
-            const similarityInput = document.getElementById('similarity-threshold');
-            if (similarityInput && newConfig.search?.similarity_threshold !== undefined) {
-                similarityInput.value = newConfig.search.similarity_threshold;
-            }
-
-            // Sync prompts
-            const systemPromptInput = document.getElementById('system-prompt');
-            if (systemPromptInput && newConfig.rag_prompts?.system_prompt !== undefined) {
-                systemPromptInput.value = newConfig.rag_prompts.system_prompt;
-            }
-
-            const userTemplateInput = document.getElementById('user-template');
-            if (userTemplateInput && newConfig.rag_prompts?.user_template !== undefined) {
-                userTemplateInput.value = newConfig.rag_prompts.user_template;
-            }
-
-            // Update range displays if they exist
-            const ranges = advancedModal.querySelectorAll('input[type="range"]');
-            ranges.forEach(range => {
-                const valueDisplay = range.nextElementSibling;
-                if (valueDisplay && valueDisplay.classList.contains('range-value')) {
-                    valueDisplay.textContent = range.value;
-                }
-            });
-
+        const highlightToggle = document.getElementById('highlight-results');
+        if (highlightToggle && newConfig.ui_preferences?.highlight_results !== undefined) {
+            const enabled = Boolean(newConfig.ui_preferences.highlight_results);
+            highlightToggle.checked = enabled;
+            if (!enabled) window.globalSearchInterface?.clearVisualizationHighlight?.();
+            window.globalSearchInterface?.updateSearchResultsFooterMessages?.(enabled);
         }
 
-        // Sync Quick Settings modal controls (RAG settings)
-        const quickModal = document.getElementById('quick-settings-modal');
-        if (quickModal) {
+        const rerankerToggle = document.getElementById('reranker-enabled');
+        if (rerankerToggle && newConfig.search?.reranker_enabled !== undefined) {
+            rerankerToggle.checked = newConfig.search.reranker_enabled === true;
+        }
+
+        const hoverMetadataToggle = document.getElementById('hover-metadata-enabled');
+        if (hoverMetadataToggle && newConfig.ui_preferences?.hover_metadata !== undefined) {
+            hoverMetadataToggle.checked = newConfig.ui_preferences.hover_metadata !== false;
+        }
+
+        // Sync the in-place Search & answers controls.
+        const advancedModal = document.getElementById('advanced-settings-modal');
+        if (advancedModal) {
             const vectorWeightSlider = document.getElementById('quick-vector-weight');
             if (vectorWeightSlider && newConfig.search?.vector_weight !== undefined) {
                 vectorWeightSlider.value = newConfig.search.vector_weight * 100;
@@ -4887,6 +5281,16 @@ function setupConfigSync() {
             const quickMaxTokensSlider = document.getElementById('quick-max-tokens');
             if (quickMaxTokensSlider && newConfig.llm?.max_tokens !== undefined) {
                 quickMaxTokensSlider.value = newConfig.llm.max_tokens;
+            }
+
+            const quickTopPSlider = document.getElementById('quick-top-p');
+            if (quickTopPSlider && newConfig.llm?.top_p !== undefined) {
+                quickTopPSlider.value = newConfig.llm.top_p;
+            }
+
+            const quickRepeatPenaltySlider = document.getElementById('quick-repeat-penalty');
+            if (quickRepeatPenaltySlider && newConfig.llm?.repeat_penalty !== undefined) {
+                quickRepeatPenaltySlider.value = newConfig.llm.repeat_penalty;
             }
 
             // Sync prompts in Quick Settings
@@ -4916,22 +5320,21 @@ function setupConfigSync() {
                 hydePrompt.value = newConfig.hyde.prompt;
             }
 
-            // Update Quick Settings slider value displays
-            const quickRanges = quickModal.querySelectorAll('input[type="range"]');
-            quickRanges.forEach(range => {
-                const rangeId = range.id;
-                let valueDisplay = document.getElementById(rangeId + '-value');
-                if (valueDisplay) {
-                    if (rangeId === 'quick-vector-weight') {
-                        const vectorPercent = parseInt(range.value, 10);
-                        const bm25Percent = 100 - vectorPercent;
-                        valueDisplay.textContent = `${vectorPercent}% Vector / ${bm25Percent}% BM25`;
-                    } else {
-                        valueDisplay.textContent = range.value;
-                    }
-                }
+            const vectorPercent = parseInt(vectorWeightSlider?.value || '60', 10);
+            const displays = {
+                'quick-weight-value': `${vectorPercent} / ${100 - vectorPercent}`,
+                'quick-retrieval-k-value': retrievalKSlider?.value,
+                'quick-temperature-value': quickTempSlider?.value,
+                'quick-max-tokens-value': quickMaxTokensSlider?.value,
+                'quick-top-p-value': quickTopPSlider?.value,
+                'quick-repeat-penalty-value': quickRepeatPenaltySlider?.value,
+                'hyde-temperature-value': hydeTemp?.value,
+                'hyde-max-tokens-value': hydeMaxTokens?.value
+            };
+            Object.entries(displays).forEach(([id, value]) => {
+                const display = document.getElementById(id);
+                if (display && value !== undefined) display.textContent = value;
             });
-
         }
     });
 
@@ -4980,10 +5383,14 @@ function collectConfigurationData() {
     return {
         llm: {
             model_id: savedConfig.llm?.model_id || getValueSafe('llm-model-id', defaults.llm?.model_id),
-            temperature: parseFloat(getValueSafe('temperature', String(defaults.llm?.temperature))),
-            max_tokens: parseInt(getValueSafe('max-tokens', String(defaults.llm?.max_tokens)), 10),
-            top_p: parseFloat(getValueSafe('top-p', String(defaults.llm?.top_p))),
-            repeat_penalty: parseFloat(getValueSafe('repeat-penalty', String(defaults.llm?.repeat_penalty))),
+            reasoning_mode: getValueSafe(
+                'llm-reasoning-mode',
+                savedConfig.llm?.reasoning_mode || defaults.llm?.reasoning_mode || 'direct'
+            ),
+            temperature: parseFloat(getFromDomOrConfig('quick-temperature', 'llm.temperature', defaults.llm?.temperature)),
+            max_tokens: parseInt(getFromDomOrConfig('quick-max-tokens', 'llm.max_tokens', defaults.llm?.max_tokens), 10),
+            top_p: parseFloat(getFromDomOrConfig('quick-top-p', 'llm.top_p', defaults.llm?.top_p)),
+            repeat_penalty: parseFloat(getFromDomOrConfig('quick-repeat-penalty', 'llm.repeat_penalty', defaults.llm?.repeat_penalty)),
             context_window_size: savedConfig.llm?.context_window_size || parseInt(getValueSafe('context-window-size', String(defaults.llm?.context_window_size)), 10)
         },
         embeddings: {
@@ -5005,24 +5412,36 @@ function collectConfigurationData() {
             sentence_min_characters: parseInt(getValueSafe('sentence-min-characters', String(defaults.chunking?.sentence_min_characters || 12)), 10),
             sentence_delimiters: getSentenceDelimiters(),
             sentence_include_delimiter: getValueSafe('sentence-include-delimiter', defaults.chunking?.sentence_include_delimiter || 'prev'),
+            semantic_threshold: parseFloat(getValueSafe('semantic-threshold', String(defaults.chunking?.semantic_threshold ?? 0.8))),
+            semantic_similarity_window: parseInt(getValueSafe('semantic-similarity-window', String(defaults.chunking?.semantic_similarity_window ?? 3)), 10),
+            semantic_filter_window: parseInt(getValueSafe('semantic-filter-window', String(defaults.chunking?.semantic_filter_window ?? 5)), 10),
+            semantic_filter_polyorder: parseInt(getValueSafe('semantic-filter-polyorder', String(defaults.chunking?.semantic_filter_polyorder ?? 3)), 10),
+            semantic_filter_tolerance: parseFloat(getValueSafe('semantic-filter-tolerance', String(defaults.chunking?.semantic_filter_tolerance ?? 0.2))),
+            semantic_skip_window: parseInt(getValueSafe('semantic-skip-window', String(defaults.chunking?.semantic_skip_window ?? 0)), 10),
+            code_language: getValueSafe('code-language', defaults.chunking?.code_language || 'auto'),
+            table_mode: getValueSafe('table-mode', defaults.chunking?.table_mode || 'row'),
+            table_rows_per_chunk: parseInt(getValueSafe('table-rows-per-chunk', String(defaults.chunking?.table_rows_per_chunk ?? 10)), 10),
             fast_delimiters: decodeEscapes(getValueSafe('fast-delimiters', defaults.chunking?.fast_delimiters || '\\n.?')),
             fast_prefix: getCheckedSafe('fast-prefix', defaults.chunking?.fast_prefix || false),
             fast_consecutive: getCheckedSafe('fast-consecutive', defaults.chunking?.fast_consecutive || false),
             fast_forward_fallback: getCheckedSafe('fast-forward-fallback', defaults.chunking?.fast_forward_fallback !== false)
         },
         rag_prompts: {
-            system_prompt: getFromDomOrConfig('system-prompt', 'rag_prompts.system_prompt', defaults.rag_prompts?.system_prompt),
-            user_template: getFromDomOrConfig('user-template', 'rag_prompts.user_template', defaults.rag_prompts?.user_template)
+            system_prompt: getFromDomOrConfig('quick-system-prompt', 'rag_prompts.system_prompt', defaults.rag_prompts?.system_prompt),
+            user_template: getFromDomOrConfig('quick-user-template', 'rag_prompts.user_template', defaults.rag_prompts?.user_template)
         },
         search: {
             num_results: parseInt(getFromDomOrConfig('rag-num-results', 'search.num_results', defaults.search?.num_results), 10),
-            retrieval_k: parseInt(getFromDomOrConfig('rag-retrieval-k', 'search.retrieval_k', defaults.search?.retrieval_k), 10),
-            vector_weight: document.getElementById('vector-weight')
-                ? parseFloat(document.getElementById('vector-weight').value) / 100
+            retrieval_k: parseInt(getFromDomOrConfig('quick-retrieval-k', 'search.retrieval_k', defaults.search?.retrieval_k), 10),
+            vector_weight: document.getElementById('quick-vector-weight')
+                ? parseFloat(document.getElementById('quick-vector-weight').value) / 100
                 : (savedConfig.search?.vector_weight ?? defaults.search?.vector_weight ?? 0.6),
             similarity_threshold: parseFloat(getFromDomOrConfig('similarity-threshold', 'search.similarity_threshold', defaults.search?.similarity_threshold)),
-            retrieval_mode: savedConfig.search?.retrieval_mode ?? defaults.search?.retrieval_mode ?? 'semantic',
-            quick_mode: savedConfig.search?.quick_mode ?? defaults.search?.quick_mode ?? 'vector'
+            retrieval_mode: savedConfig.search?.retrieval_mode ?? defaults.search?.retrieval_mode ?? 'hybrid',
+            quick_mode: savedConfig.search?.quick_mode ?? defaults.search?.quick_mode ?? 'hybrid',
+            reranker_enabled: document.getElementById('reranker-enabled')
+                ? document.getElementById('reranker-enabled').checked
+                : (savedConfig.search?.reranker_enabled ?? false)
         },
         clustering: {
             umap_n_neighbors: parseInt(getValueSafe('umap-n-neighbors', String(defaults.clustering?.umap_n_neighbors)), 10),
@@ -5069,10 +5488,12 @@ function populateConfigurationForm(config) {
     if (config.llm) {
         const llm = config.llm;
         setElementValue('llm-model-id', llm.model_id || llm.model_name);
-        setElementValue('temperature', llm.temperature);
-        setElementValue('max-tokens', llm.max_tokens);
-        setElementValue('top-p', llm.top_p);
-        setElementValue('repeat-penalty', llm.repeat_penalty);
+        setElementValue('llm-reasoning-mode', llm.reasoning_mode || 'direct');
+        window.updateReasoningModeControl?.(llm.model_id || llm.model_name, llm.reasoning_mode);
+        setElementValue('quick-temperature', llm.temperature);
+        setElementValue('quick-max-tokens', llm.max_tokens);
+        setElementValue('quick-top-p', llm.top_p);
+        setElementValue('quick-repeat-penalty', llm.repeat_penalty);
         setElementValue('context-window-size', llm.context_window_size);
     }
     
@@ -5100,6 +5521,15 @@ function populateConfigurationForm(config) {
         setElementValue('sentence-delimiters', (chunk.sentence_delimiters || ['. ', '! ', '? ', '\n'])
             .map(delimiter => delimiter === '\n' ? '\\n' : delimiter)
             .join('\n'));
+        setElementValue('semantic-threshold', chunk.semantic_threshold ?? 0.8);
+        setElementValue('semantic-similarity-window', chunk.semantic_similarity_window ?? 3);
+        setElementValue('semantic-filter-window', chunk.semantic_filter_window ?? 5);
+        setElementValue('semantic-filter-polyorder', chunk.semantic_filter_polyorder ?? 3);
+        setElementValue('semantic-filter-tolerance', chunk.semantic_filter_tolerance ?? 0.2);
+        setElementValue('semantic-skip-window', chunk.semantic_skip_window ?? 0);
+        setElementValue('code-language', chunk.code_language || 'auto');
+        setElementValue('table-mode', chunk.table_mode || 'row');
+        setElementValue('table-rows-per-chunk', chunk.table_rows_per_chunk ?? 10);
         setElementValue('fast-delimiters', String(chunk.fast_delimiters || '\n.?').replace(/\n/g, '\\n'));
         const fastPrefix = document.getElementById('fast-prefix');
         const fastConsecutive = document.getElementById('fast-consecutive');
@@ -5113,17 +5543,18 @@ function populateConfigurationForm(config) {
     // Populate prompts
     if (config.rag_prompts) {
         const prompts = config.rag_prompts;
-        setElementValue('system-prompt', prompts.system_prompt);
-        setElementValue('user-template', prompts.user_template);
+        setElementValue('quick-system-prompt', prompts.system_prompt);
+        setElementValue('quick-user-template', prompts.user_template);
     }
-    
+
     // Populate search settings
     if (config.search) {
         const search = config.search;
         setElementValue('rag-num-results', search.num_results);
-        setElementValue('rag-retrieval-k', search.retrieval_k ?? 60);
-        setElementValue('vector-weight', search.vector_weight !== undefined ? search.vector_weight * 100 : 60);
+        setElementValue('quick-retrieval-k', search.retrieval_k ?? 60);
+        setElementValue('quick-vector-weight', search.vector_weight !== undefined ? search.vector_weight * 100 : 60);
         setElementValue('similarity-threshold', search.similarity_threshold);
+        setElementValue('reranker-enabled', search.reranker_enabled === true);
         const retrievalSelect = document.getElementById('rag-retrieval-mode');
         if (retrievalSelect) {
             retrievalSelect.value = 'semantic';
@@ -5143,6 +5574,21 @@ function populateConfigurationForm(config) {
         setElementValue('hdbscan-metric', cluster.hdbscan_metric);
     }
     
+    // Appearance: hover metadata on the map. Bound once, then kept in sync by
+    // the config observer above. Default on when the preference is unset.
+    const hoverMetadataToggle = document.getElementById('hover-metadata-enabled');
+    if (hoverMetadataToggle) {
+        hoverMetadataToggle.checked = config.ui_preferences?.hover_metadata !== false;
+        if (hoverMetadataToggle.dataset.configBound !== 'true') {
+            hoverMetadataToggle.dataset.configBound = 'true';
+            hoverMetadataToggle.addEventListener('change', () => {
+                window.ConfigManager?.updateConfig({
+                    ui_preferences: { hover_metadata: hoverMetadataToggle.checked }
+                });
+            });
+        }
+    }
+
     // Update range displays
     const ranges = document.querySelectorAll('input[type="range"]');
     ranges.forEach(range => {
@@ -5166,7 +5612,9 @@ function setElementValue(id, value) {
 
 function applyRAGSettingsToForms() {
     if (typeof window.loadRAGSettings !== 'function') {
-        console.warn('loadRAGSettings not available; skipping RAG form sync');
+        // The current settings UI is driven by ConfigManager. Older builds
+        // exposed loadRAGSettings globally, so retain the compatibility hook
+        // without warning when that retired API is absent.
         return;
     }
 
@@ -5188,10 +5636,10 @@ function applyRAGSettingsToForms() {
             }
         }
 
-        setElementValue('temperature', getValue('temperature', 0.7));
-        setElementValue('max-tokens', getValue('maxTokens', 768));
-        setElementValue('system-prompt', getValue('systemPrompt', ''));
-        setElementValue('user-template', getValue('userTemplate', ''));
+        setElementValue('quick-temperature', getValue('temperature', 0.7));
+        setElementValue('quick-max-tokens', getValue('maxTokens', 768));
+        setElementValue('quick-system-prompt', getValue('systemPrompt', ''));
+        setElementValue('quick-user-template', getValue('userTemplate', ''));
     } catch (error) {
         console.warn('Failed to apply persisted RAG settings to advanced panel:', error);
     }
@@ -5225,8 +5673,12 @@ function syncLocalRAGSettingsFromConfig(config) {
 }
 
 // Modal functionality
+let advancedSettingsInvoker = null;
+
 function initializeModalHandlers() {
     const openButton = document.getElementById('open-advanced-settings');
+    const headerSettingsButton = document.getElementById('header-settings-btn');
+    const modelSetupButton = document.getElementById('settings-open-model-setup');
     const modal = document.getElementById('advanced-settings-modal');
     const closeButton = document.getElementById('close-advanced-settings');
     const modalOverlay = modal;
@@ -5236,7 +5688,20 @@ function initializeModalHandlers() {
             openAdvancedSettingsModal();
         });
     }
-    
+
+    if (headerSettingsButton) {
+        headerSettingsButton.addEventListener('click', () => {
+            openAdvancedSettingsModal('storage');
+        });
+    }
+
+    if (modelSetupButton) {
+        modelSetupButton.addEventListener('click', () => {
+            closeAdvancedSettingsModal({ restoreFocus: false });
+            setTimeout(() => window.openVectoriaModelSetup?.(), 300);
+        });
+    }
+
     if (closeButton) {
         closeButton.addEventListener('click', () => {
             closeAdvancedSettingsModal();
@@ -5273,10 +5738,22 @@ function initializeModalHandlers() {
 function openAdvancedSettingsModal(category = 'storage') {
     const modal = document.getElementById('advanced-settings-modal');
     if (modal) {
+        const activeElement = document.activeElement;
+        if (activeElement && activeElement !== document.body && !modal.contains(activeElement)) {
+            advancedSettingsInvoker = activeElement;
+        }
+
         // Load current configuration when opening modal
         if (window.ConfigManager) {
             const config = window.ConfigManager.getConfig();
             populateConfigurationForm(config);
+        }
+
+        const modelSetupGroup = document.getElementById('settings-model-setup-group');
+        if (modelSetupGroup) {
+            let modelsReady = false;
+            try { modelsReady = localStorage.getItem('vectoria_models_ready') === 'true'; } catch (_) {}
+            modelSetupGroup.hidden = modelsReady;
         }
 
         selectAdvancedSettingsCategory(category);
@@ -5288,18 +5765,20 @@ function openAdvancedSettingsModal(category = 'storage') {
         }
         
         // Show modal with animation
+        clearVisualizationTransientState();
         modal.style.display = 'flex';
         document.body.classList.add('modal-open');
         
         // Animate in
         setTimeout(() => {
             modal.classList.add('modal-visible');
+            modal.querySelector(`.settings-nav-btn[data-category="${category}"]`)?.focus();
         }, 10);
         
     }
 }
 
-function closeAdvancedSettingsModal() {
+function closeAdvancedSettingsModal({ restoreFocus = true } = {}) {
     const modal = document.getElementById('advanced-settings-modal');
     if (modal) {
         // Animate out
@@ -5308,6 +5787,9 @@ function closeAdvancedSettingsModal() {
         setTimeout(() => {
             modal.style.display = 'none';
             document.body.classList.remove('modal-open');
+            if (restoreFocus && advancedSettingsInvoker?.isConnected) {
+                advancedSettingsInvoker.focus();
+            }
         }, 300);
         
     }
@@ -5477,25 +5959,51 @@ function enhanceSettingsWithModelDownloads() {
     if (llmModelSelect) {
         llmModelSelect.addEventListener('change', async (e) => {
             const modelId = e.target.value;
+            const activeOperation = window.browserML?.pipeline?.rag?.activeOperation;
+            if (activeOperation) {
+                e.target.value = _previousModelValue;
+                const description = window.browserML.pipeline.rag._operationLabel?.(activeOperation.owner) || 'running a local AI task';
+                showToast(`Local AI is currently ${description}. Finish or stop it before changing models.`, 'warning');
+                return;
+            }
             const constraints = typeof getModelConstraints === 'function' ? getModelConstraints(modelId) : {};
             const modelName = constraints.description || modelId;
-            // Use real download size captured from previous downloads, fall back to estimate
-            let modelSize = constraints.estimatedSize || '~2.0 GB';
-            let hasRealSize = false;
-            if (window.__webllmRealDownloadSizes && window.__webllmRealDownloadSizes[modelId]) {
-                modelSize = window.__webllmRealDownloadSizes[modelId];
-                hasRealSize = true;
-            }
+            const modelSize = window.formatModelDownloadSize?.(constraints.downloadBytes) || 'Unknown';
+            const modelVRAM = window.formatModelVRAM?.(constraints) || 'Unknown';
+            window.updateReasoningModeControl?.(
+                modelId,
+                window.ConfigManager?.getConfig()?.llm?.reasoning_mode || 'direct'
+            );
+            let isCached = false;
+            try {
+                if (typeof window.isWebLLMModelCached === 'function') {
+                    isCached = await window.isWebLLMModelCached(modelId);
+                }
+            } catch (_) { /* Treat an unavailable cache inspection as not cached. */ }
 
             // Show confirmation modal
             const modal = document.getElementById('model-change-modal');
             const nameEl = document.getElementById('model-change-name');
             const sizeEl = document.getElementById('model-change-size');
             const sizeLabelEl = document.getElementById('model-change-size-label');
+            const vramEl = document.getElementById('model-change-vram');
+            const cacheStatusEl = document.getElementById('model-change-cache-status');
+            const tierEl = document.getElementById('model-change-rag-tier');
             if (modal && nameEl && sizeEl) {
                 nameEl.textContent = modelName;
                 sizeEl.textContent = modelSize;
-                if (sizeLabelEl) sizeLabelEl.textContent = hasRealSize ? 'Download size:' : 'Estimated download:';
+                if (sizeLabelEl) sizeLabelEl.textContent = 'First download:';
+                if (vramEl) vramEl.textContent = modelVRAM;
+                if (cacheStatusEl) cacheStatusEl.textContent = isCached ? 'Already downloaded' : 'Not downloaded';
+                if (tierEl) {
+                    const labels = {
+                        limited: 'Limited — best for extractive or single-source questions',
+                        recommended: 'Recommended for multi-source answers',
+                        quality: 'Quality tier for multi-source answers'
+                    };
+                    tierEl.textContent = labels[constraints.ragTier] || labels.recommended;
+                }
+                clearVisualizationTransientState();
                 modal.style.display = 'flex';
 
                 const closeModal = () => {
@@ -5516,6 +6024,16 @@ function enhanceSettingsWithModelDownloads() {
                         }
                         updateSlidersForModel(modelId);
                         _previousModelValue = modelId;
+                        // Readiness is model-specific. Autostart setup after the
+                        // reload so "Download & Reload" really prepares the newly
+                        // selected model instead of deferring a surprise download
+                        // until the next chat or cluster-label request.
+                        try {
+                            localStorage.removeItem('vectoria_models_ready');
+                            localStorage.removeItem('vectoria_models_ready_signature');
+                            localStorage.removeItem('vectoria_models_cached');
+                            localStorage.setItem('vectoria_model_setup_autostart', 'true');
+                        } catch (_) {}
                         window.location.reload();
                     } catch (error) {
                         console.error('Failed to save LLM model:', error);
@@ -5525,6 +6043,10 @@ function enhanceSettingsWithModelDownloads() {
                 const onCancel = () => {
                     closeModal();
                     llmModelSelect.value = _previousModelValue;
+                    window.updateReasoningModeControl?.(
+                        _previousModelValue,
+                        window.ConfigManager?.getConfig()?.llm?.reasoning_mode || 'direct'
+                    );
                 };
 
                 const onOverlay = (evt) => {
@@ -5538,6 +6060,8 @@ function enhanceSettingsWithModelDownloads() {
                 const confirmBtn = document.getElementById('model-change-confirm');
                 const cancelBtn = document.getElementById('model-change-cancel');
                 const cancelXBtn = document.getElementById('model-change-cancel-x');
+
+                confirmBtn.textContent = isCached ? 'Reload with Model' : 'Download & Reload';
 
                 confirmBtn.addEventListener('click', onConfirm);
                 cancelBtn.addEventListener('click', onCancel);
@@ -5555,6 +6079,7 @@ function enhanceSettingsWithModelDownloads() {
                 if (storedModel) {
                     llmModelSelect.value = storedModel;
                     _previousModelValue = storedModel;
+                    window.updateReasoningModeControl?.(storedModel, config.llm?.reasoning_mode);
                     // Update sliders for current model
                     updateSlidersForModel(storedModel);
                 }
@@ -5576,6 +6101,7 @@ function enhanceSettingsWithModelDownloads() {
             const sizeEl = document.getElementById('context-window-new-size');
             if (modal && sizeEl) {
                 sizeEl.textContent = contextSize.toLocaleString();
+                clearVisualizationTransientState();
                 modal.style.display = 'flex';
 
                 const closeModal = () => {
@@ -5632,7 +6158,13 @@ function enhanceSettingsWithModelDownloads() {
                 const storedContextSize = config.llm?.context_window_size;
                 if (storedContextSize) {
                     contextWindowSelect.value = storedContextSize;
-                    _previousContextValue = String(storedContextSize);
+                    // Re-apply the per-model ceiling: this block runs after the
+                    // model select restores its own value, so a stored size above
+                    // the model's limit would otherwise survive.
+                    if (typeof window.getModelConstraints === 'function') {
+                        updateContextWindowOptionsForModel(window.getModelConstraints(config.llm?.model_id));
+                    }
+                    _previousContextValue = contextWindowSelect.value;
                 }
             }
         } catch (error) {
@@ -5667,7 +6199,7 @@ function enhanceSettingsWithModelDownloads() {
         }
     }
 
-    // Handle Check Storage button
+    // Handle browser storage estimate button
     const checkStorageBtn = document.getElementById('check-storage-btn');
     if (checkStorageBtn) {
         checkStorageBtn.addEventListener('click', async () => {
@@ -5676,8 +6208,11 @@ function enhanceSettingsWithModelDownloads() {
                     const estimate = await navigator.storage.estimate();
                     const usage = estimate.usage || 0;
                     const quota = estimate.quota || 0;
-                    const available = quota - usage;
+                    const available = Math.max(0, quota - usage);
                     const percentUsed = quota > 0 ? (usage / quota) * 100 : 0;
+                    const isPersistent = typeof navigator.storage.persisted === 'function'
+                        ? await navigator.storage.persisted()
+                        : null;
 
                     // Format sizes intelligently
                     const formatSize = (bytes) => {
@@ -5695,6 +6230,7 @@ function enhanceSettingsWithModelDownloads() {
                     const storageDetails = document.getElementById('storage-details');
                     const storageBarFill = document.getElementById('storage-bar-fill');
                     const storageUsedLabel = document.getElementById('storage-used-label');
+                    const storagePercentLabel = document.getElementById('storage-percent-label');
                     const storageAvailableLabel = document.getElementById('storage-available-label');
 
                     if (storageInfo && storageDetails) {
@@ -5706,29 +6242,46 @@ function enhanceSettingsWithModelDownloads() {
 
                         // Update labels
                         if (storageUsedLabel) {
-                            storageUsedLabel.textContent = `${formatSize(usage)} used (${percentUsed.toFixed(1)}%)`;
+                            storageUsedLabel.textContent = `${formatSize(usage)} used`;
+                        }
+                        if (storagePercentLabel) {
+                            storagePercentLabel.textContent = quota > 0
+                                ? `${percentUsed.toFixed(1)}% of current site quota`
+                                : 'Current site quota unavailable';
                         }
                         if (storageAvailableLabel) {
-                            storageAvailableLabel.textContent = `${formatSize(available)} available`;
+                            storageAvailableLabel.textContent = quota > 0
+                                ? `~${formatSize(available)} estimated remaining`
+                                : 'Remaining space unavailable';
                         }
 
-                        // Build detailed breakdown
+                        const detailLabels = {
+                            indexedDB: 'Datasets & indexes',
+                            caches: 'Model & app caches',
+                            serviceWorkerRegistrations: 'Service worker',
+                            fileSystem: 'Browser files'
+                        };
+                        const breakdown = Object.entries(estimate.usageDetails || {})
+                            .filter(([key, value]) => detailLabels[key] && Number(value) > 0)
+                            .map(([key, value]) => `<div class="storage-breakdown-item"><span>${detailLabels[key]}</span><strong>${formatSize(Number(value))}</strong></div>`)
+                            .join('');
+                        const quotaText = quota > 0 ? formatSize(quota) : 'not reported';
+                        const persistenceText = isPersistent === true
+                            ? 'The browser has granted persistent storage.'
+                            : isPersistent === false
+                                ? 'The browser may reclaim this site data under storage pressure.'
+                                : 'Storage retention is managed by your browser.';
+                        const pressureText = quota > 0 && percentUsed >= 85
+                            ? '<br><strong>Nearly full:</strong> reset Vectoria data if you need to free this browser quota.'
+                            : '';
+
                         storageDetails.innerHTML = `
-                            <div class="storage-item">
-                                <span class="storage-item-label">Used</span>
-                                <span class="storage-item-value highlight">${formatSize(usage)}</span>
-                            </div>
-                            <div class="storage-item">
-                                <span class="storage-item-label">Available</span>
-                                <span class="storage-item-value">${formatSize(available)}</span>
-                            </div>
-                            <div class="storage-item">
-                                <span class="storage-item-label">Browser Limit</span>
-                                <span class="storage-item-value">${formatSize(quota)}</span>
-                            </div>
+                            <p class="storage-explanation"><strong>What this means:</strong> vectoria.app is using ${formatSize(usage)} of its current ${quotaText} browser allowance. This is an estimate for this site—not your device's free disk space—and the allowance can change. ${persistenceText}${pressureText}</p>
+                            ${breakdown ? `<div class="storage-breakdown" aria-label="Reported storage breakdown">${breakdown}</div>` : ''}
                         `;
 
                         storageInfo.style.display = 'block';
+                        checkStorageBtn.innerHTML = '<i class="fas fa-rotate"></i> Refresh usage';
                     }
 
                 } else {
@@ -5748,6 +6301,7 @@ function enhanceSettingsWithModelDownloads() {
             const modal = document.getElementById('reset-all-data-modal');
             if (!modal) return;
 
+            clearVisualizationTransientState();
             modal.style.display = 'flex';
 
             const closeModal = () => {
@@ -5761,39 +6315,64 @@ function enhanceSettingsWithModelDownloads() {
 
             const onConfirm = async () => {
                 closeModal();
+                const failedSteps = [];
+                const withResetTimeout = (promise, label, timeoutMs = 8000) => Promise.race([
+                    Promise.resolve(promise),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs))
+                ]);
+                const runResetStep = async (label, task, timeoutMs) => {
+                    try {
+                        await withResetTimeout(Promise.resolve().then(task), label, timeoutMs);
+                    } catch (error) {
+                        failedSteps.push(label);
+                        console.warn(`Unable to finish ${label}:`, error);
+                    }
+                };
+                const resetWatchdog = setTimeout(() => {
+                    try { localStorage.clear(); } catch (_) {}
+                    try { sessionStorage.clear(); } catch (_) {}
+                    try { window.browserML?.pipeline?.clearDataset?.(); } catch (_) {}
+                    window.location.reload();
+                }, 15000);
+
                 try {
                     clearCacheBtn.disabled = true;
                     clearCacheBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Resetting...';
 
-                    // 1. Unregister all service workers FIRST, so a wedged/old
+                    // 1. Clear Vectoria's known stores through their live
+                    //    localForage connections first. Deleting an IndexedDB
+                    //    database can remain blocked while this or another tab
+                    //    still has it open; clearing the stores guarantees the
+                    //    user's datasets and conversations are removed anyway.
+                    await runResetStep('Vectoria IndexedDB stores', async () => {
+                        await window.browserML?.pipeline?.storage?.clearAll?.();
+                    }, 6000);
+
+                    // 2. Unregister all service workers FIRST, so a wedged/old
                     //    worker can't keep serving stale assets or re-populate
                     //    caches while we clear them. (This was the main gap that
                     //    let corrupted profiles survive a "reset".)
                     if ('serviceWorker' in navigator) {
-                        try {
+                        await runResetStep('service workers', async () => {
                             const regs = await navigator.serviceWorker.getRegistrations();
-                            await Promise.all(regs.map(r => r.unregister()));
-                        } catch (e) {
-                            console.warn('Unable to unregister service workers:', e);
-                        }
+                            await Promise.allSettled(regs.map(registration => registration.unregister()));
+                        });
                     }
 
-                    // 2. Clear all Cache API caches
+                    // 3. Clear all Cache API caches
                     if ('caches' in window) {
-                        try {
+                        await runResetStep('Cache Storage', async () => {
                             const cacheNames = await caches.keys();
-                            await Promise.all(cacheNames.map(n => caches.delete(n)));
-                        } catch (e) {
-                            console.warn('Unable to clear Cache Storage:', e);
-                        }
+                            await Promise.allSettled(cacheNames.map(name => caches.delete(name)));
+                        }, 12000);
                     }
 
-                    // 3. Delete ALL IndexedDB databases. Enumerate them when the
+                    // 4. Delete ALL IndexedDB databases. Enumerate them when the
                     //    browser supports it (Chromium); fall back to a known
                     //    list for Firefox/Safari where databases() is missing.
                     //    A hardcoded list alone misses version-specific DBs that
                     //    WebLLM / transformers.js create.
-                    try {
+                    await runResetStep('IndexedDB databases', async () => {
                         let dbNames = [];
                         if (indexedDB.databases) {
                             const dbs = await indexedDB.databases();
@@ -5801,52 +6380,49 @@ function enhanceSettingsWithModelDownloads() {
                         }
                         // Always include known names as a fallback / belt-and-braces.
                         const fallback = [
+                            'vectoria',
                             'webllm', 'webllm-cache', 'webllm/model', 'webllm/wasm',
                             'mlc-llm', 'mlc-cache',
                             'vectoria-embeddings', 'vectoria-indexes', 'vectoria-data',
                             'localforage', 'transformers-cache', 'keyval-store'
                         ];
-                        for (const name of new Set([...dbNames, ...fallback])) {
-                            try {
-                                await new Promise((resolve) => {
+                        await Promise.allSettled([...new Set([...dbNames, ...fallback])].map(name =>
+                            new Promise((resolve) => {
                                     const req = indexedDB.deleteDatabase(name);
                                     req.onsuccess = req.onerror = req.onblocked = () => resolve();
-                                });
-                            } catch (_) { /* ignore individual failures */ }
-                        }
-                    } catch (e) {
-                        console.warn('Unable to enumerate/delete IndexedDB:', e);
-                    }
-
-                    // 4. Clear ALL localStorage and sessionStorage (not just
-                    //    vectoria* keys) — a full reset should leave nothing,
-                    //    including third-party (WebLLM) and UI-preference keys.
-                    try { localStorage.clear(); } catch (e) { console.warn('Unable to clear localStorage:', e); }
-                    try { sessionStorage.clear(); } catch (e) { console.warn('Unable to clear sessionStorage:', e); }
+                            })
+                        ));
+                    }, 12000);
 
                     // 5. Best-effort wipe of the Origin Private File System,
                     //    used by some model loaders for large files.
-                    try {
+                    await runResetStep('origin-private files', async () => {
                         if (navigator.storage && navigator.storage.getDirectory) {
                             const root = await navigator.storage.getDirectory();
                             for await (const [name] of root.entries()) {
                                 try { await root.removeEntry(name, { recursive: true }); } catch (_) {}
                             }
                         }
-                    } catch (e) {
-                        // OPFS may be unavailable or empty; ignore.
-                    }
-
-                    showToast('All data cleared. Reloading...', 'success');
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 1000);
-
+                    }, 8000);
                 } catch (error) {
                     console.error('❌ Failed to reset:', error);
-                    showToast(`Failed to reset: ${error.message}`, 'error');
-                    clearCacheBtn.disabled = false;
-                    clearCacheBtn.innerHTML = '<i class="fas fa-trash-alt"></i> Reset and clear all data';
+                    failedSteps.push('reset');
+                } finally {
+                    clearTimeout(resetWatchdog);
+                    // Clear synchronous stores even if a browser storage API
+                    // above failed or timed out, then reload unconditionally so
+                    // the app cannot remain stuck on "Resetting...".
+                    try { localStorage.clear(); } catch (e) { console.warn('Unable to clear localStorage:', e); }
+                    try { sessionStorage.clear(); } catch (e) { console.warn('Unable to clear sessionStorage:', e); }
+                    try { window.browserML?.pipeline?.clearDataset?.(); } catch (_) {}
+
+                    showToast(
+                        failedSteps.length
+                            ? 'Local data cleared. Reloading; some browser caches may finish clearing in the background.'
+                            : 'All data cleared. Reloading...',
+                        failedSteps.length ? 'warning' : 'success'
+                    );
+                    setTimeout(() => window.location.reload(), 500);
                 }
             };
 
@@ -5878,39 +6454,41 @@ window.applyRAGSettingsToForms = applyRAGSettingsToForms;
 
 // Setting restrictions functionality
 let isFileProcessed = false;
-let restrictedSettings = [];
+const restrictedSettings = [
+    'llm-model-id',
+    'embedding-batch-size',
+    'embedding-max-length',
+    'embedding-tokens-per-batch'
+];
+const clusteringRestrictedSettings = [
+    'umap-n-neighbors',
+    'umap-min-dist',
+    'umap-metric',
+    'umap-clustering-dimensions',
+    'hdbscan-min-cluster-size',
+    'hdbscan-min-samples',
+    'hdbscan-metric',
+    'hdbscan-sample-ratio',
+    'hdbscan-epsilon',
+    'hdbscan-method'
+];
 
 function initializeSettingRestrictions() {
-    // Track file processing state
-    const processBtn = document.getElementById('process-csv-btn');
-    if (processBtn) {
-        processBtn.addEventListener('click', () => {
-            handleFileProcessingStart();
-        });
-    }
-    
-    // Define which settings should be restricted after file processing
-    restrictedSettings = [
-        'llm-model-id',
-        'embedding-batch-size',
-        'embedding-max-length',
-        'embedding-tokens-per-batch'
-    ];
-    
-    // Define clustering settings that should be restricted after data is processed
-    clusteringRestrictedSettings = [
-        'umap-n-neighbors',
-        'umap-min-dist',
-        'umap-metric',
-        'umap-clustering-dimensions',
-        'hdbscan-min-cluster-size',
-        'hdbscan-min-samples',
-        'hdbscan-metric',
-        'hdbscan-sample-ratio',
-        'hdbscan-epsilon',
-        'hdbscan-method'
-    ];
-    
+    // A dataset becomes authoritative only after processing, importing, or
+    // restoring succeeds. Listening to that lifecycle avoids locking settings
+    // on a failed processing attempt and covers every way data can be loaded.
+    document.addEventListener('vectoria:dataset-changed', (event) => {
+        if (event.detail?.datasetId) handleFileProcessingStart();
+        else removeSettingRestrictions({ notify: false });
+    });
+
+    const fileInput = document.getElementById('file-input');
+    fileInput?.addEventListener('change', (event) => {
+        if (event.target.files?.length > 0) removeSettingRestrictions();
+    });
+
+    const activeDatasetId = window.browserML?.pipeline?.currentDatasetId;
+    if (activeDatasetId) handleFileProcessingStart();
 }
 
 function handleFileProcessingStart() {
@@ -5954,44 +6532,24 @@ function applySettingRestrictions() {
 }
 
 function addRestrictionIndicators() {
-    // Add indicators for model restrictions
-    const restrictedElements = document.querySelectorAll('.setting-restricted');
-    restrictedElements.forEach(element => {
-        const parent = element.parentElement;
-        if (parent && !parent.querySelector('.restriction-indicator')) {
-            const indicator = document.createElement('div');
-            indicator.className = 'restriction-indicator';
-            indicator.innerHTML = '<i class="fas fa-lock"></i> Setting locked after file processing';
-            indicator.style.cssText = `
-                color: var(--warning-color);
-                font-size: 0.8em;
-                margin-top: 4px;
-                display: flex;
-                align-items: center;
-                gap: 4px;
-            `;
-            parent.appendChild(indicator);
-        }
+    const addGroupIndicator = (element, className, message, icon) => {
+        const group = element.closest('.settings-group');
+        if (!group || Array.from(group.children).some(child => child.classList?.contains(className))) return;
+        const indicator = document.createElement('div');
+        indicator.className = className;
+        indicator.innerHTML = `<i class="fas ${icon}" aria-hidden="true"></i> ${message}`;
+        const heading = group.querySelector(':scope > h4');
+        if (heading) heading.insertAdjacentElement('afterend', indicator);
+        else group.prepend(indicator);
+    };
+
+    document.querySelectorAll('.setting-restricted').forEach(element => {
+        addGroupIndicator(element, 'restriction-indicator', 'Settings locked after file processing', 'fa-lock');
     });
-    
-    // Add indicators for clustering restrictions
-    const clusteringRestrictedElements = document.querySelectorAll('.setting-clustering-restricted');
-    clusteringRestrictedElements.forEach(element => {
-        const parent = element.parentElement;
-        if (parent && !parent.querySelector('.clustering-restriction-indicator')) {
-            const indicator = document.createElement('div');
-            indicator.className = 'clustering-restriction-indicator';
-            indicator.innerHTML = '<i class="fas fa-chart-bar"></i> Clustering locked after data processing';
-            indicator.style.cssText = `
-                color: var(--info-color);
-                font-size: 0.8em;
-                margin-top: 4px;
-                display: flex;
-                align-items: center;
-                gap: 4px;
-            `;
-            parent.appendChild(indicator);
-        }
+
+    document.querySelectorAll('.setting-clustering-restricted').forEach(element => {
+        const heading = element.closest('.settings-group')?.querySelector(':scope > h4')?.textContent || 'Clustering';
+        addGroupIndicator(element, 'clustering-restriction-indicator', `${heading} settings locked after data processing`, 'fa-chart-bar');
     });
 }
 
@@ -6001,31 +6559,10 @@ function addRestrictionTooltip(element, message) {
 }
 
 function showSettingRestrictionWarning() {
-    const modal = document.getElementById('advanced-settings-modal');
-    if (modal && modal.style.display !== 'none') {
-        const modalBody = modal.querySelector('.modal-body');
-        if (modalBody && !modalBody.querySelector('.setting-restriction-warning')) {
-            const warning = document.createElement('div');
-            warning.className = 'setting-restriction-warning';
-            warning.innerHTML = `
-                <div style="background: rgba(255, 152, 0, 0.1); border: 1px solid var(--warning-color); border-radius: var(--radius-md); padding: 12px 16px; margin-bottom: 20px;">
-                    <div style="display: flex; align-items: center; gap: 8px; color: var(--warning-color); font-weight: 600; margin-bottom: 8px;">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        Settings Restricted
-                    </div>
-                    <div style="color: var(--text-secondary); font-size: 0.9em; line-height: 1.4;">
-                        Some model settings are locked after processing a file to ensure consistency. 
-                        You can still modify LLM parameters (temperature, prompts, etc.) and RAG search settings.
-                        To change model settings, upload a new file.
-                    </div>
-                </div>
-            `;
-            modalBody.insertBefore(warning, modalBody.firstChild);
-        }
-    }
+    // Group-level lock notices are added beside the controls they explain.
 }
 
-function removeSettingRestrictions() {
+function removeSettingRestrictions({ notify = true } = {}) {
     isFileProcessed = false;
     
     // Remove model restrictions from elements
@@ -6060,7 +6597,7 @@ function removeSettingRestrictions() {
         warning.remove();
     }
     
-    showToast('All settings unlocked for new file', 'info');
+    if (notify) showToast('All settings unlocked for new file', 'info');
 }
 
 // Function to check if settings are currently restricted
@@ -6074,33 +6611,6 @@ function getRestrictedSettings() {
         const element = document.getElementById(settingId);
         return element && element.disabled;
     });
-}
-
-// Enhanced settings UI to handle restrictions
-function enhanceSettingsWithRestrictions() {
-    // Override the settings initialization to handle restrictions
-    const originalInitializeSettings = window.initializeSettingsUI;
-    window.initializeSettingsUI = function() {
-        originalInitializeSettings();
-        
-        // Apply restrictions if file has been processed
-        if (isFileProcessed) {
-            setTimeout(() => {
-                applySettingRestrictions();
-                addRestrictionIndicators();
-            }, 100);
-        }
-        
-        // Add file upload listener to remove restrictions
-        const fileInput = document.getElementById('file-input');
-        if (fileInput) {
-            fileInput.addEventListener('change', (e) => {
-                if (e.target.files.length > 0) {
-                    removeSettingRestrictions();
-                }
-            });
-        }
-    };
 }
 
 // Track processing states for better UX
@@ -6204,9 +6714,6 @@ function handleModelChange(modelType, newModel, oldModel) {
     
     return false;
 }
-
-// Initialize restriction enhancements
-enhanceSettingsWithRestrictions();
 
 // Make restriction functions globally available
 window.initializeSettingRestrictions = initializeSettingRestrictions;
@@ -6446,33 +6953,7 @@ function createMetadataFilterContainer() {
 
 // Separate function to attach button handlers - can be called multiple times safely
 function attachFilterButtonHandlers() {
-    const applyBtn = document.getElementById('apply-metadata-filters');
     const clearBtn = document.getElementById('clear-metadata-filters');
-    
-    if (applyBtn) {
-        // Remove old listeners by cloning
-        const newApplyBtn = applyBtn.cloneNode(true);
-        applyBtn.parentNode.replaceChild(newApplyBtn, applyBtn);
-        
-        // Add new listener with capture phase to ensure it runs
-        newApplyBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            try {
-                applyMetadataFilters();
-            } catch (err) {
-                console.error('Error in applyMetadataFilters:', err);
-            }
-        }, true);
-        
-        // Also add in bubble phase as backup
-        newApplyBtn.addEventListener('click', function(e) {
-        }, false);
-        
-    } else {
-        console.warn('⚠️ Apply Filters button (#apply-metadata-filters) not found in DOM');
-    }
-    
     if (clearBtn) {
         // Remove old listeners by cloning
         const newClearBtn = clearBtn.cloneNode(true);
@@ -6489,31 +6970,21 @@ function attachFilterButtonHandlers() {
             }
         }, true);
         
-        // Also add in bubble phase as backup
-        newClearBtn.addEventListener('click', function(e) {
-        }, false);
-        
     } else {
         console.warn('⚠️ Clear All button (#clear-metadata-filters) not found in DOM');
     }
-    
+
 }
 
 async function loadMetadataSchemaFromBackend() {
     try {
         const response = await fetch('/metadata_schema');
-        
-        if (response.ok) {
-            const data = await response.json();
-            if (data.metadata_fields && Object.keys(data.metadata_fields).length > 0) {
-                return data.metadata_fields;
-            } else {
-            }
-        } else {
-            const errorData = await response.json().catch(() => ({}));
+        if (!response.ok) return null;
+        const data = await response.json();
+        if (data.metadata_fields && Object.keys(data.metadata_fields).length > 0) {
+            return data.metadata_fields;
         }
-    } catch (error) {
-    }
+    } catch (_) {}
     return null;
 }
 
@@ -6655,9 +7126,6 @@ async function loadMetadataFromProcessedData() {
                 const hasValidRange = field.type === 'number' && (field.min_value !== null || field.max_value !== null);
                 const isValidField = field.name && field.type && (hasValidValues || hasValidRange || field.type === 'text');
                 
-                if (!isValidField) {
-                }
-                
                 return isValidField;
             })
             .map(field => ({
@@ -6704,11 +7172,11 @@ function updateMetadataUI() {
     metadataFilterUI.style.display = 'block';
     
     const filtersGrid = document.getElementById('metadata-filters-grid');
-    const filterActions = metadataFilterUI.querySelector('.metadata-filter-actions');
+    const filterActions = document.querySelector('.filter-panel-footer');
     
     if (detectedMetadataFields.length === 0) {
         filtersGrid.innerHTML = '<p class="no-metadata-message">No metadata fields detected in this file.</p>';
-        filterActions.style.display = 'none';
+        if (filterActions) filterActions.style.display = 'none';
         return;
     }
     
@@ -6717,7 +7185,7 @@ function updateMetadataUI() {
     
     if (filterableFields.length === 0) {
         filtersGrid.innerHTML = '<p class="no-metadata-message">No filterable metadata fields detected. All fields appear to be text content.</p>';
-        filterActions.style.display = 'none';
+        if (filterActions) filterActions.style.display = 'none';
         return;
     }
     
@@ -6728,7 +7196,7 @@ function updateMetadataUI() {
     });
     
     filtersGrid.innerHTML = filtersHTML;
-    filterActions.style.display = 'flex';
+    if (filterActions) filterActions.style.display = 'grid';
     
     // Add event listeners to filter controls
     addFilterEventListeners();
@@ -6736,53 +7204,93 @@ function updateMetadataUI() {
     showToast(`Detected ${filterableFields.length} filterable metadata fields`, 'success');
 }
 
+function metadataFilterId(fieldName) {
+    const value = String(fieldName ?? '');
+    const readable = value.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 36) || 'field';
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index++) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `filter-${readable}-${(hash >>> 0).toString(36)}`;
+}
+
 function createFilterUI(field) {
-    const filterId = `filter-${field.name.replace(/[^a-zA-Z0-9]/g, '-')}`;
-    const displayName = field.displayName || formatMetadataKey(field.name);
+    const fieldName = String(field.name ?? '');
+    const filterId = metadataFilterId(fieldName);
+    const displayName = String(field.displayName || formatMetadataKey(fieldName));
+    const escapedFieldName = escapeHtml(fieldName);
+    const escapedDisplayName = escapeHtml(displayName);
+    const uniqueValues = Array.isArray(field.uniqueValues) ? field.uniqueValues : [];
     
     switch (field.type) {
-        case 'category':
+        case 'category': {
+            const categoryOptions = uniqueValues.map((value, index) => {
+                const checkboxId = `${filterId}-${index}`;
+                const display = fieldName === 'cluster_label' ? clusterLabelDisplay(value) : value;
+                return `
+                    <label class="checkbox-option" for="${checkboxId}" title="Double-click to add or remove this filter">
+                        <input type="checkbox"
+                               id="${checkboxId}"
+                               class="metadata-filter-checkbox"
+                               data-field="${escapedFieldName}"
+                               value="${escapeHtml(value)}"
+                               aria-label="${escapeHtml(display)}; double-click to toggle filter">
+                        <span class="checkbox-custom"></span>
+                        <span class="checkbox-label-text">${escapeHtml(display)}</span>
+                    </label>
+                `;
+            }).join('');
+
             return `
-                <div class="metadata-filter-item" data-field="${field.name}" data-type="category">
-                    <label for="${filterId}">${displayName}</label>
-                    <select id="${filterId}" class="metadata-filter" multiple>
-                        <option value="">All ${displayName}</option>
-                        ${field.uniqueValues.map(value => {
-                            // value stays raw (used for filtering); only the label is humanised
-                            const display = field.name === 'cluster_label' ? clusterLabelDisplay(value) : value;
-                            return `<option value="${escapeHtml(value)}">${escapeHtml(display)}</option>`;
-                        }).join('')}
-                    </select>
-                    <small class="filter-help">${field.uniqueValues.length} categories</small>
+                <div class="metadata-filter-item metadata-filter-checkboxes" data-field="${escapedFieldName}" data-type="category">
+                    <div class="filter-header">
+                        <label class="filter-title">${escapedDisplayName}</label>
+                        <span class="filter-option-count">${uniqueValues.length}</span>
+                    </div>
+                    <div class="checkbox-group" id="${filterId}" role="group" aria-label="${escapedDisplayName} filter values">
+                        ${categoryOptions}
+                    </div>
                 </div>
             `;
+        }
         
         case 'integer':
         case 'number':
-            const minVal = field.minValue !== null ? field.minValue : Math.min(...field.uniqueValues.map(Number));
-            const maxVal = field.maxValue !== null ? field.maxValue : Math.max(...field.uniqueValues.map(Number));
+            const numericValues = uniqueValues.map(Number).filter(Number.isFinite);
+            const configuredMin = Number(field.minValue);
+            const configuredMax = Number(field.maxValue);
+            const minVal = Number.isFinite(configuredMin) ? configuredMin : (numericValues.length ? Math.min(...numericValues) : '');
+            const maxVal = Number.isFinite(configuredMax) ? configuredMax : (numericValues.length ? Math.max(...numericValues) : '');
+            const rangeLabel = minVal === '' && maxVal === ''
+                ? 'No numeric range detected'
+                : `Range: ${minVal === '' ? '—' : minVal} - ${maxVal === '' ? '—' : maxVal}`;
             return `
-                <div class="metadata-filter-item" data-field="${field.name}" data-type="number">
-                    <label for="${filterId}-min">${displayName}</label>
+                <div class="metadata-filter-item" data-field="${escapedFieldName}" data-type="number">
+                    <label for="${filterId}-min">${escapedDisplayName}</label>
                     <div class="range-filter">
                         <input type="number" id="${filterId}-min" class="metadata-filter" 
-                               data-range="min" placeholder="Min" min="${minVal}" max="${maxVal}">
+                               data-range="min" aria-label="${escapedDisplayName} minimum"
+                               placeholder="Min" min="${minVal}" max="${maxVal}">
                         <span>to</span>
                         <input type="number" id="${filterId}-max" class="metadata-filter"
-                               data-range="max" placeholder="Max" min="${minVal}" max="${maxVal}">
+                               data-range="max" aria-label="${escapedDisplayName} maximum"
+                               placeholder="Max" min="${minVal}" max="${maxVal}">
                     </div>
-                    <small class="filter-help">Range: ${minVal} - ${maxVal}</small>
+                    <small class="filter-help">${rangeLabel}</small>
                 </div>
             `;
         
         case 'date':
             return `
-                <div class="metadata-filter-item" data-field="${field.name}" data-type="date">
-                    <label for="${filterId}-from">${displayName}</label>
+                <div class="metadata-filter-item" data-field="${escapedFieldName}" data-type="date">
+                    <label for="${filterId}-from">${escapedDisplayName}</label>
                     <div class="date-filter">
-                        <input type="date" id="${filterId}-from" class="metadata-filter" data-range="from">
+                        <input type="date" id="${filterId}-from" class="metadata-filter" data-range="from"
+                               aria-label="${escapedDisplayName} start date">
                         <span>to</span>
-                        <input type="date" id="${filterId}-to" class="metadata-filter" data-range="to">
+                        <input type="date" id="${filterId}-to" class="metadata-filter" data-range="to"
+                               aria-label="${escapedDisplayName} end date">
                     </div>
                     <small class="filter-help">Date range filter</small>
                 </div>
@@ -6790,8 +7298,8 @@ function createFilterUI(field) {
         
         case 'boolean':
             return `
-                <div class="metadata-filter-item" data-field="${field.name}" data-type="boolean">
-                    <label for="${filterId}">${displayName}</label>
+                <div class="metadata-filter-item" data-field="${escapedFieldName}" data-type="boolean">
+                    <label for="${filterId}">${escapedDisplayName}</label>
                     <select id="${filterId}" class="metadata-filter">
                         <option value="">All</option>
                         <option value="true">True/Yes</option>
@@ -6803,12 +7311,12 @@ function createFilterUI(field) {
         
         default:
             // For text fields with limited unique values, treat as category with checkboxes
-            if (field.uniqueValues.length <= 20) {
-                const checkboxes = field.uniqueValues.map((value, idx) => {
+            if (uniqueValues.length <= 20) {
+                const checkboxes = uniqueValues.map((value, idx) => {
                     const checkboxId = `${filterId}-${idx}`;
                     // For cluster_label field, show the custom/AI-generated cluster name
                     // (value attr stays raw — see clusterLabelDisplay).
-                    const displayValue = field.name === 'cluster_label'
+                    const displayValue = fieldName === 'cluster_label'
                         ? escapeHtml(clusterLabelDisplay(value))
                         : escapeHtml(value);
                     return `
@@ -6816,7 +7324,7 @@ function createFilterUI(field) {
                             <input type="checkbox"
                                    id="${checkboxId}"
                                    class="metadata-filter-checkbox"
-                                   data-field="${field.name}"
+                                   data-field="${escapedFieldName}"
                                    value="${escapeHtml(value)}">
                             <span class="checkbox-custom"></span>
                             <span class="checkbox-label-text">${displayValue}</span>
@@ -6825,158 +7333,124 @@ function createFilterUI(field) {
                 }).join('');
 
                 return `
-                    <div class="metadata-filter-item metadata-filter-checkboxes" data-field="${field.name}" data-type="category">
+                    <div class="metadata-filter-item metadata-filter-checkboxes" data-field="${escapedFieldName}" data-type="category">
                         <div class="filter-header">
-                            <label class="filter-title">
-                                ${displayName}
-                                <span class="multi-select-badge">Multi-select</span>
-                            </label>
-                            <button class="select-all-btn" data-field="${field.name}" type="button">
+                            <label class="filter-title">${escapedDisplayName}</label>
+                            <span class="filter-option-count">${uniqueValues.length}</span>
+                            <button class="select-all-btn" data-field="${escapedFieldName}" type="button">
                                 <i class="fas fa-check-double"></i> All
                             </button>
-                            <button class="clear-all-btn" data-field="${field.name}" type="button">
+                            <button class="clear-all-btn" data-field="${escapedFieldName}" type="button">
                                 <i class="fas fa-times"></i> Clear
                             </button>
                         </div>
-                        <div class="checkbox-group" id="${filterId}">
+                        <div class="checkbox-group" id="${filterId}" role="group" aria-label="${escapedDisplayName} filter values">
                             ${checkboxes}
                         </div>
-                        <small class="filter-help">
-                            <i class="fas fa-mouse-pointer"></i>
-                            Click to select • Double-click to apply • ${field.uniqueValues.length} options
-                        </small>
                     </div>
                 `;
             } else {
                 // Create datalist with suggestions (limit to 100 for performance)
                 const datalistId = `${filterId}-suggestions`;
-                const suggestions = field.uniqueValues.slice(0, 100);
+                const suggestions = uniqueValues.slice(0, 100);
                 const datalistOptions = suggestions.map(v => `<option value="${escapeHtml(String(v))}">`).join('');
 
                 return `
-                    <div class="metadata-filter-item" data-field="${field.name}" data-type="text">
-                        <label for="${filterId}">${displayName}</label>
+                    <div class="metadata-filter-item" data-field="${escapedFieldName}" data-type="text">
+                        <label for="${filterId}">${escapedDisplayName}</label>
                         <input type="text" id="${filterId}" class="metadata-filter"
-                               placeholder="Search ${displayName.toLowerCase()}..."
+                               placeholder="Search ${escapeHtml(displayName.toLowerCase())}..."
                                list="${datalistId}" autocomplete="off">
                         <datalist id="${datalistId}">${datalistOptions}</datalist>
-                        <small class="filter-help">Text search in ${field.uniqueValues.length} values</small>
+                        <small class="filter-help">Text search in ${uniqueValues.length} values</small>
                     </div>
                 `;
             }
     }
 }
 
+let metadataFilterApplyTimer = 0;
+
+function scheduleMetadataFilterApply(immediate = false) {
+    clearTimeout(metadataFilterApplyTimer);
+    const apply = () => {
+        metadataFilterApplyTimer = 0;
+        applyMetadataFilters();
+    };
+    if (immediate) apply();
+    else metadataFilterApplyTimer = setTimeout(apply, 250);
+}
+
 function addFilterEventListeners() {
     const filterElements = document.querySelectorAll('.metadata-filter');
     filterElements.forEach(element => {
         // Update count on change/input
-        element.addEventListener('change', updateFilterCount);
-        element.addEventListener('input', updateFilterCount);
+        element.addEventListener('change', () => {
+            updateFilterCount();
+            scheduleMetadataFilterApply(true);
+        });
+        element.addEventListener('input', () => {
+            updateFilterCount();
+            scheduleMetadataFilterApply(false);
+        });
 
-        // Auto-apply for range inputs (number/date) with debounce
-        if (element.type === 'number' || element.type === 'date') {
-            let rangeDebounceTimer;
-            element.addEventListener('input', (e) => {
-                clearTimeout(rangeDebounceTimer);
-                rangeDebounceTimer = setTimeout(() => {
-                    if (typeof applyMetadataFilters === 'function') {
-                        applyMetadataFilters();
-                    }
-                }, 800); // Auto-apply 800ms after user stops typing
-            });
-        }
     });
 
-    // Add checkbox event listeners
+    const toggleCategoryCheckbox = (checkbox, forceChecked) => {
+        checkbox.checked = typeof forceChecked === 'boolean' ? forceChecked : !checkbox.checked;
+        updateFilterCount();
+        scheduleMetadataFilterApply(true);
+    };
+
+    // Mouse users deliberately toggle category filters with a double-click.
+    // Keyboard users retain the equivalent Enter/Space activation.
     const checkboxes = document.querySelectorAll('.metadata-filter-checkbox');
     checkboxes.forEach(checkbox => {
-        // Update count on change
-        checkbox.addEventListener('change', updateFilterCount);
-
-        // Double-click to apply filters instantly
-        checkbox.addEventListener('dblclick', (e) => {
-            e.preventDefault();
-
-            // Visual feedback
-            const label = checkbox.closest('.checkbox-option');
-            if (label) {
-                label.style.transition = 'all 0.2s ease';
-                label.style.transform = 'scale(1.05)';
-                label.style.background = 'rgba(102, 126, 234, 0.2)';
-
-                setTimeout(() => {
-                    label.style.transform = 'scale(1)';
-                    label.style.background = '';
-                }, 200);
-            }
-
-            // Apply filters
-            if (typeof applyMetadataFilters === 'function') {
-                applyMetadataFilters();
-            }
+        const option = checkbox.closest('.checkbox-option');
+        option?.addEventListener('click', (event) => {
+            event.preventDefault();
+            checkbox.focus({ preventScroll: true });
+        });
+        option?.addEventListener('dblclick', (event) => {
+            event.preventDefault();
+            toggleCategoryCheckbox(checkbox);
+        });
+        checkbox.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            toggleCategoryCheckbox(checkbox);
         });
     });
 
-    // Add Select All / Clear All button handlers
+    const bindDoubleClickBulkAction = (button, checked) => {
+        const apply = (event) => {
+            event.preventDefault();
+            const fieldName = button.dataset.field;
+            const fieldCheckboxes = document.querySelectorAll(`.metadata-filter-checkbox[data-field="${fieldName}"]`);
+            fieldCheckboxes.forEach(checkbox => { checkbox.checked = checked; });
+            updateFilterCount();
+            scheduleMetadataFilterApply(true);
+        };
+        button.addEventListener('click', (event) => {
+            // A keyboard-generated click has detail 0 and is the accessible
+            // equivalent of the requested mouse double-click.
+            if (event.detail === 0) apply(event);
+            else event.preventDefault();
+        });
+        button.addEventListener('dblclick', apply);
+    };
+
+    // Bulk category actions follow the same deliberate activation contract.
     const selectAllBtns = document.querySelectorAll('.select-all-btn');
     selectAllBtns.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const fieldName = btn.dataset.field;
-            const checkboxes = document.querySelectorAll(`.metadata-filter-checkbox[data-field="${fieldName}"]`);
-            checkboxes.forEach(cb => cb.checked = true);
-            updateFilterCount();
-        });
+        bindDoubleClickBulkAction(btn, true);
     });
 
     const clearAllBtns = document.querySelectorAll('.clear-all-btn');
     clearAllBtns.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const fieldName = btn.dataset.field;
-            const checkboxes = document.querySelectorAll(`.metadata-filter-checkbox[data-field="${fieldName}"]`);
-            checkboxes.forEach(cb => cb.checked = false);
-            updateFilterCount();
-        });
+        bindDoubleClickBulkAction(btn, false);
     });
 
-    // Double-click to apply filters instantly
-    filterElements.forEach(element => {
-        // Double-click to apply filters instantly
-        element.addEventListener('dblclick', (e) => {
-            e.preventDefault();
-            // Show visual feedback
-            element.style.transition = 'all 0.2s ease';
-            element.style.transform = 'scale(1.02)';
-            element.style.boxShadow = '0 0 0 3px rgba(102, 126, 234, 0.3)';
-            
-            setTimeout(() => {
-                element.style.transform = 'scale(1)';
-                element.style.boxShadow = '';
-            }, 200);
-            
-            // Apply filters
-            if (typeof applyMetadataFilters === 'function') {
-                applyMetadataFilters();
-            }
-        });
-        
-    });
-
-    // Also add Enter key support for text inputs
-    filterElements.forEach(element => {
-        if (element.tagName === 'INPUT' && element.type === 'text') {
-            element.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (typeof applyMetadataFilters === 'function') {
-                        applyMetadataFilters();
-                    }
-                }
-            });
-        }
-    });
 }
 
 function updateFilterCount() {
@@ -6995,9 +7469,6 @@ function updateFilterCount() {
             filterCountElement.style.display = 'inline-block';
         }
     }
-
-    // Also update persistent status bar near the search input
-    updateFilterStatusBar();
 }
 
 // Persistent filter status bar (always accessible near search)
@@ -7104,7 +7575,7 @@ function collectActiveFilters() {
     return filters;
 }
 
-window.collectMetadataFiltersForSearch = function() {
+function collectMetadataFilterControls() {
     const filters = {};
     const filterElements = document.querySelectorAll('.metadata-filter-item input, .metadata-filter-item select');
 
@@ -7185,12 +7656,31 @@ window.collectMetadataFiltersForSearch = function() {
     });
 
     return filters;
+}
+
+window.collectMetadataFiltersForSearch = function() {
+    return JSON.parse(JSON.stringify(activeMetadataFilters || {}));
 };
+
+function restoreMetadataFilterControls(filters = {}) {
+    document.querySelectorAll('.metadata-filter-item').forEach((item) => {
+        const field = item.dataset.field;
+        const config = filters[field];
+        const value = config?.value;
+        item.querySelectorAll('input, select').forEach((element) => {
+            if (element.type === 'checkbox') element.checked = Array.isArray(value) && value.map(String).includes(element.value);
+            else if (element.multiple) Array.from(element.options).forEach((option) => { option.selected = Array.isArray(value) && value.map(String).includes(option.value); });
+            else if (element.dataset.range === 'min' || element.dataset.range === 'from') element.value = value?.min ?? '';
+            else if (element.dataset.range === 'max' || element.dataset.range === 'to') element.value = value?.max ?? '';
+            else element.value = value ?? '';
+        });
+    });
+}
 
 // Render active filter chips (as HTML string)
 function renderActiveFilterChips(filters) {
     const parts = [];
-    const formatRange = (v, isDate = false) => {
+    const formatRange = (v) => {
         if (!v || (v.min === undefined && v.max === undefined)) return '';
         const min = v.min !== undefined ? v.min : '';
         const max = v.max !== undefined ? v.max : '';
@@ -7203,13 +7693,14 @@ function renderActiveFilterChips(filters) {
         const type = cfg.type;
         const value = cfg.value;
         const prettyKey = formatMetadataKey(field);
+        const removeLabel = escapeHtml(`Remove ${prettyKey} filter`);
         if (type === 'category') {
             if (Array.isArray(value)) {
                 value.forEach(val => {
                     parts.push(
                         `<span class="filter-chip" data-field="${escapeHtml(field)}" data-type="category" data-value="${escapeHtml(val)}">` +
                         `<span class="chip-key">${escapeHtml(prettyKey)}:</span> <span class="chip-value">${escapeHtml(val)}</span>` +
-                        `<button class="chip-remove" title="Remove">×</button>` +
+                        `<button class="chip-remove" type="button" title="Remove" aria-label="${removeLabel}">×</button>` +
                         `</span>`
                     );
                 });
@@ -7217,17 +7708,17 @@ function renderActiveFilterChips(filters) {
                 parts.push(
                     `<span class="filter-chip" data-field="${escapeHtml(field)}" data-type="category" data-value="${escapeHtml(String(value))}">` +
                     `<span class="chip-key">${escapeHtml(prettyKey)}:</span> <span class="chip-value">${escapeHtml(String(value))}</span>` +
-                    `<button class="chip-remove" title="Remove">×</button>` +
+                    `<button class="chip-remove" type="button" title="Remove" aria-label="${removeLabel}">×</button>` +
                     `</span>`
                 );
             }
         } else if (type === 'number' || type === 'date') {
-            const rangeText = formatRange(value, type === 'date');
+            const rangeText = formatRange(value);
             if (rangeText) {
                 parts.push(
                     `<span class="filter-chip" data-field="${escapeHtml(field)}" data-type="${type}" data-value="">` +
                     `<span class="chip-key">${escapeHtml(prettyKey)}:</span> <span class="chip-value">${escapeHtml(rangeText)}</span>` +
-                    `<button class="chip-remove" title="Remove">×</button>` +
+                    `<button class="chip-remove" type="button" title="Remove" aria-label="${removeLabel}">×</button>` +
                     `</span>`
                 );
             }
@@ -7236,7 +7727,7 @@ function renderActiveFilterChips(filters) {
             parts.push(
                 `<span class="filter-chip" data-field="${escapeHtml(field)}" data-type="boolean" data-value="${value}">` +
                 `<span class="chip-key">${escapeHtml(prettyKey)}:</span> <span class="chip-value">${label}</span>` +
-                `<button class="chip-remove" title="Remove">×</button>` +
+                `<button class="chip-remove" type="button" title="Remove" aria-label="${removeLabel}">×</button>` +
                 `</span>`
             );
         } else if (type === 'text') {
@@ -7245,7 +7736,7 @@ function renderActiveFilterChips(filters) {
                 parts.push(
                     `<span class="filter-chip" data-field="${escapeHtml(field)}" data-type="text" data-value="">` +
                     `<span class="chip-key">${escapeHtml(prettyKey)}:</span> <span class="chip-value">"${escapeHtml(label)}"</span>` +
-                    `<button class="chip-remove" title="Remove">×</button>` +
+                    `<button class="chip-remove" type="button" title="Remove" aria-label="${removeLabel}">×</button>` +
                     `</span>`
                 );
             }
@@ -7398,8 +7889,6 @@ function filterVisualizationPointsByMetadata(points, metadataFilters) {
 
     return points.filter((point, index) => {
         // Debug first few points to see what's happening
-        const isDebugPoint = index < 3;
-        
         // Check if point matches all filters
         for (const [fieldName, filterConfig] of Object.entries(metadataFilters)) {
             const filterType = filterConfig.type;
@@ -7414,14 +7903,9 @@ function filterVisualizationPointsByMetadata(points, metadataFilters) {
                 actualValue = point.data[fieldName];
             }
             
-            if (isDebugPoint) {
-            }
-            
             // Skip if field doesn't exist on this point
             if (actualValue === null || actualValue === undefined || actualValue === '' ||
                 (Array.isArray(actualValue) && actualValue.length === 0)) {
-                if (isDebugPoint) {
-                }
                 return false;
             }
             
@@ -7433,8 +7917,6 @@ function filterVisualizationPointsByMetadata(points, metadataFilters) {
                 const candidateValues = toValueArray(actualValue);
                 const matches = candidateValues.some(val => selectedValues.includes(val));
                 if (!matches) {
-                    if (isDebugPoint) {
-                    }
                     return false;
                 }
             } else if (filterType === 'number') {
@@ -7486,29 +7968,7 @@ function filterVisualizationPointsByMetadata(points, metadataFilters) {
         return true;
     });
 }
-
-function showFilterNotification(message, isCleared = false) {
-    const banner = document.getElementById('filter-notification-banner');
-    const textEl = document.getElementById('filter-notification-text');
-    
-    if (!banner || !textEl) return;
-    
-    // Update text and style
-    textEl.textContent = message;
-    banner.classList.remove('cleared', 'show');
-    
-    if (isCleared) {
-        banner.classList.add('cleared');
-    }
-    
-    // Show banner
-    setTimeout(() => banner.classList.add('show'), 10);
-    
-    // Hide after 2.5 seconds
-    setTimeout(() => {
-        banner.classList.remove('show');
-    }, 2500);
-}
+window.filterVisualizationPointsByMetadata = filterVisualizationPointsByMetadata;
 
 // Update RAG scope text based on current filter/lasso state
 function updateRAGScopeTextNow() {
@@ -7528,17 +7988,15 @@ function updateRAGScopeTextNow() {
     } else {
         scopeText.textContent = `Analyzing ${totalCount.toLocaleString()} document${totalCount === 1 ? '' : 's'} from the entire dataset`;
     }
+    document.dispatchEvent(new CustomEvent('vectoria:scope-changed'));
 }
 window.updateRAGScopeTextNow = updateRAGScopeTextNow;
 
 async function applyMetadataFilters() {
-    const filters = window.collectMetadataFiltersForSearch();
+    const filters = collectMetadataFilterControls();
     activeMetadataFilters = filters;
 
     updateExportButtonVisibility();
-
-    // Count active filters
-    const filterCount = Object.keys(filters).length;
 
     // INSTANT UPDATE: Apply visual filter preview immediately for responsiveness
     applyInstantFilterPreview(filters);
@@ -7548,11 +8006,6 @@ async function applyMetadataFilters() {
 
     // Update the persistent status bar immediately
     updateFilterStatusBar();
-
-    // Show notification when filters are applied (clearing message handled elsewhere)
-    if (filterCount > 0) {
-        showFilterNotification(`Filters applied: ${filterCount} active`, false);
-    }
 
     /* DISABLED: Backend sync not needed - frontend filtering works perfectly
     try {
@@ -7612,7 +8065,6 @@ async function applyMetadataFilters() {
 
     // Update UI
     updateFilterCount();
-    sendFiltersToBackend(filters);
 
     return filters;
 }
@@ -7677,10 +8129,6 @@ function applyInstantFilterPreview(filters) {
                 }
                 if (actualValue === undefined && point.data) {
                     actualValue = point.data[fieldName];
-                }
-                
-                // Debug: Log field lookup for troubleshooting (use a counter since filteredPoints is being built)
-                if (currentVisualizationData.points.indexOf(point) < 3) {
                 }
                 
                 // Quick filtering logic (same as DataManager but optimized for speed)
@@ -7871,21 +8319,10 @@ function clearMetadataFilters() {
         window.mainVisualization.clearHighlight();
     }
     
-    // Send empty filters to backend
-    sendFiltersToBackend({});
-    
     // Update UI
     updateFilterCount();
     updateFilterStatusBar();
     
-    // Show notification
-    showFilterNotification('All filters cleared', true);
-
-    // Also show toast for better visibility
-    if (typeof showToast === 'function') {
-        showToast('All filters cleared', 'success');
-    }
-
     // Update RAG scope text immediately
     updateRAGScopeTextNow();
 
@@ -7913,192 +8350,14 @@ window.attachFilterButtonHandlers = attachFilterButtonHandlers;
 window.debugVectoriaState = function() {
 };
 
-function sendFiltersToBackend(filters) {
-    // Send the filters to the backend
-    fetch('/api/set-metadata-filters', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ filters: filters })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-        } else {
-            console.error('Failed to apply metadata filters on backend:', data.error);
-        }
-    })
-    .catch(error => {
-        console.error('Error sending metadata filters to backend:', error);
-    });
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 // Make metadata functions globally available
 window.initializeMetadataSystem = initializeMetadataSystem;
 window.analyzeFileForMetadata = analyzeFileForMetadata;
 window.applyMetadataFilters = applyMetadataFilters;
 window.clearMetadataFilters = clearMetadataFilters;
 
-// Debug functions for metadata system
-window.debugMetadata = function() {
-    if (currentVisualizationData && currentVisualizationData.points) {
-        const excludedKeys = ['index', 'x', 'y', 'cluster', 'text', 'cluster_probability'];
-        const metadataKeys = Object.keys(currentVisualizationData.points[0] || {})
-            .filter(key => !excludedKeys.includes(key));
-        // Show sample values for each metadata key
-        metadataKeys.forEach(key => {
-            const sampleValues = currentVisualizationData.points
-                .slice(0, 5)
-                .map(point => point[key])
-                .filter(value => value !== null && value !== undefined && value !== '');
-        });
-    }
-};
-
-window.testMetadataFiltering = function() {
-    if (currentVisualizationData && currentVisualizationData.points) {
-        // Show sample point structure
-        if (currentVisualizationData.points.length > 0) {
-            const samplePoint = currentVisualizationData.points[0];
-            // Show metadata fields (excluding system fields)
-            const excludedKeys = ['index', 'x', 'y', 'cluster', 'text', 'cluster_probability', 'cluster_color', 'cluster_name', 'doc_id', 'chunk_id', 'cluster_keyword_scores', 'cluster_keywords', 'cluster_keywords_viz', 'color', 'filename', 'original_filename', 'processing_type', 'selected_column', 'num_chunks'];
-            const metadataKeys = Object.keys(samplePoint).filter(key => !excludedKeys.includes(key));
-            // Show sample values
-            metadataKeys.slice(0, 5).forEach(key => {
-            });
-        }
-        
-        // Try to extract metadata again
-        const success = extractMetadataFromVisualizationData();
-        return {
-            totalPoints: currentVisualizationData.points.length,
-            detectedFields: detectedMetadataFields.length,
-            fields: detectedMetadataFields.map(f => ({name: f.name, type: f.type, uniqueCount: f.uniqueValues.length}))
-        };
-    } else {
-        return null;
-    }
-};
-
-window.testMetadataIntegration = function() {
-    // Test 1: Metadata extraction
-    const extractionResult = window.testMetadataFiltering();
-    if (!extractionResult) {
-        return false;
-    }
-    // Test 2: UI generation
-    const filtersGrid = document.getElementById('metadata-filters-grid');
-    if (filtersGrid && filtersGrid.children.length > 0) {
-    } else {
-    }
-    
-    // Test 3: Filter collection
-    const filters = window.collectMetadataFiltersForSearch ? window.collectMetadataFiltersForSearch() : {};
-    // Test 4: Visualization connection
-    if (window.mainVisualization && typeof window.mainVisualization.enableMetadataFilterMode === 'function') {
-    } else {
-    }
-    
-    // Test 5: Search integration
-    const searchFunctions = {
-        performSearch: typeof window.performSearch === 'function',
-        fastSearch: window.globalSearchInterface && typeof window.globalSearchInterface.matchesMetadataFilters === 'function',
-        collectFilters: typeof window.collectMetadataFiltersForSearch === 'function'
-    };
-    
-    const searchIntegrationOk = Object.values(searchFunctions).every(fn => fn);
-    if (searchIntegrationOk) {
-    } else {
-    }
-    
-    return {
-        extraction: !!extractionResult,
-        uiGeneration: filtersGrid && filtersGrid.children.length > 0,
-        filterCollection: typeof window.collectMetadataFiltersForSearch === 'function',
-        visualization: window.mainVisualization && typeof window.mainVisualization.enableMetadataFilterMode === 'function',
-        search: searchIntegrationOk,
-        overall: extractionResult && searchIntegrationOk
-    };
-};
 window.getActiveMetadataFilters = () => activeMetadataFilters;
 window.getDetectedMetadataFields = () => detectedMetadataFields;
-
-// Debug function to check filter collection
-window.debugFilterCollection = function() {
-    const filterElements = document.querySelectorAll('.metadata-filter-item');
-    filterElements.forEach((filterItem, index) => {
-        const field = filterItem.dataset.field;
-        const type = filterItem.dataset.type;
-        const label = filterItem.querySelector('label')?.textContent;
-        
-        if (type === 'category') {
-            const select = filterItem.querySelector('select');
-            if (select) {
-                const selectedOptions = Array.from(select.selectedOptions);
-                selectedOptions.forEach(option => {
-                });
-                
-                // Show if first option is empty (should be "All")
-                if (select.options.length > 0) {
-                    const firstOption = select.options[0];
-                }
-            }
-        }
-    });
-    
-    // Test the collection function
-    const collectedFilters = window.collectMetadataFiltersForSearch();
-};
-
-// Debug function to diagnose metadata filtering issues
-window.debugMetadataFilteringIssues = function() {
-    // Step 1: Check if visualization data is available
-    if (!currentVisualizationData || !currentVisualizationData.points) {
-        return { issue: 'no_visualization_data' };
-    }
-    // Step 2: Check metadata extraction
-    const samplePoint = currentVisualizationData.points[0];
-    const excludedKeys = ['index', 'x', 'y', 'cluster', 'text', 'cluster_probability', 'cluster_color', 'cluster_name', 'doc_id', 'chunk_id', 'cluster_keyword_scores', 'cluster_keywords', 'cluster_keywords_viz', 'color', 'filename', 'original_filename', 'processing_type', 'selected_column', 'num_chunks'];
-    const metadataKeys = Object.keys(samplePoint).filter(key => !excludedKeys.includes(key));
-    if (metadataKeys.length === 0) {
-        return { issue: 'no_metadata_fields' };
-    }
-    
-    // Step 3: Check if metadata was extracted
-    if (detectedMetadataFields.length === 0) {
-        extractMetadataFromVisualizationData();
-    }
-    
-    // Step 4: Check UI elements
-    const toggleContainer = document.getElementById('metadata-filters-toggle');
-    const filtersSection = document.getElementById('metadata-filters-section');
-    const filtersGrid = document.getElementById('metadata-filters-grid');
-    
-    if (filtersGrid) {
-    }
-    
-    // Step 5: Inline filters are always visible
-    // Step 6: Test filter collection
-    if (typeof window.collectMetadataFiltersForSearch === 'function') {
-        const filters = window.collectMetadataFiltersForSearch();
-    } else {
-    }
-    
-    return {
-        visualizationData: !!currentVisualizationData,
-        metadataFields: metadataKeys.length,
-        detectedFields: detectedMetadataFields.length,
-        uiElements: !!(toggleContainer && filtersSection && filtersGrid),
-        toggleVisible: toggleContainer && toggleContainer.style.display !== 'none'
-    };
-};
 
 // Define RAG metadata population function GLOBALLY (outside DOM-dependent init)
 async function populateRAGMetadataFields() {
@@ -8205,7 +8464,8 @@ function initializeRAGMetadataControls() {
     
     // If elements are missing, we still expose the function but can't set up handlers
     if (!searchType || !controls || !fieldSelect || !includeBox) {
-        console.warn('⚠️ Missing RAG metadata control elements - handlers not set up yet');
+        // The legacy search-dropdown RAG controls were intentionally removed;
+        // chat metadata controls now live in the Chat settings popover.
         return;
     }
 
@@ -8494,6 +8754,7 @@ function initializeExportImportHandlers() {
 
             if (window.lastHyDEAnswer) {
                 hydeContent.textContent = window.lastHyDEAnswer;
+                clearVisualizationTransientState();
                 hydeModal.style.display = 'flex';
             } else {
                 showToast('HyDE answer not available', 'warning');

@@ -1,0 +1,25 @@
+{
+  "license": "CC0-1.0",
+  "description": "Synthetic, dataset-agnostic retrieval and reranking fixtures for Vectoria.",
+  "documents": [
+    { "id": "en-policy", "language": "en", "text": "Policy PX-204 takes effect on 17 March 2027. Requests require approval from the records team." },
+    { "id": "en-conflict", "language": "en", "text": "An obsolete draft says policy PX-204 begins on 10 March 2027." },
+    { "id": "da-notes", "language": "da", "text": "Projekt Fjord afleverer den endelige rapport den 12. oktober. Kontaktpersonen er Line Sørensen." },
+    { "id": "da-duplicate", "language": "da", "text": "Den endelige rapport for Projekt Fjord skal afleveres den 12. oktober." },
+    { "id": "de-support", "language": "de", "text": "Für Ticket DE-77 wurde der Zugriff am 4. Mai wiederhergestellt. Ursache war ein abgelaufenes Zertifikat." },
+    { "id": "fr-research", "language": "fr", "text": "L’étude Rivage observe une baisse de 18 % du temps de réponse après la deuxième intervention." },
+    { "id": "es-record", "language": "es", "text": "El expediente ES-410 fue archivado el 22 de junio por el equipo de cumplimiento." },
+    { "id": "zh-notes", "language": "zh", "text": "青云项目的复审会议安排在2027年9月8日，负责人是李明。" },
+    { "id": "noise-weather", "language": "en", "text": "The garden notes describe mild weather and routine maintenance during spring." },
+    { "id": "noise-budget", "language": "de", "text": "Die Budgetübersicht enthält allgemeine Reisekosten, aber keine Support-Tickets." }
+  ],
+  "queries": [
+    { "id": "q-en", "language": "en", "text": "When does PX-204 take effect?", "relevant": ["en-policy"], "conflicting": ["en-conflict"] },
+    { "id": "q-da", "language": "da", "text": "Hvornår afleveres rapporten for Projekt Fjord?", "relevant": ["da-notes", "da-duplicate"] },
+    { "id": "q-de", "language": "de", "text": "Warum fiel der Zugriff bei DE-77 aus?", "relevant": ["de-support"] },
+    { "id": "q-fr", "language": "fr", "text": "Quelle baisse du temps de réponse rapporte l’étude Rivage ?", "relevant": ["fr-research"] },
+    { "id": "q-es", "language": "es", "text": "¿Cuándo se archivó el expediente ES-410?", "relevant": ["es-record"] },
+    { "id": "q-zh", "language": "zh", "text": "青云项目的复审会议是什么时候？", "relevant": ["zh-notes"] },
+    { "id": "q-absent", "language": "en", "text": "What is the annual revenue of Project Fjord?", "relevant": [] }
+  ]
+}

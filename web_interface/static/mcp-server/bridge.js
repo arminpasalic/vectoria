@@ -1,6 +1,8 @@
 import { WebSocketServer } from 'ws';
 import { createServer } from 'node:http';
 
+export const BRIDGE_PROTOCOL_VERSION = 2;
+
 export class BrowserBridge {
   constructor(port = 3700, host = '127.0.0.1', allowedOrigins = []) {
     this._port = parseInt(process.env.VECTORIA_BRIDGE_PORT || port, 10);
@@ -40,6 +42,12 @@ export class BrowserBridge {
           this._client.close(1000, 'Replaced by another Vectoria tab');
         }
         this._client = ws;
+
+        ws.send(JSON.stringify({
+          type: 'RELAY_HELLO',
+          protocolVersion: BRIDGE_PROTOCOL_VERSION,
+          service: 'vectoria-mcp-relay'
+        }));
 
         // Push client info to newly connected browser tab
         if (this._clientInfo) {
@@ -138,7 +146,11 @@ export class BrowserBridge {
   }
 
   sendClientInfo(info) {
-    this._clientInfo = { name: info.name, version: info.version || '' };
+    this._clientInfo = {
+      name: info.name,
+      version: info.version || '',
+      protocolVersion: BRIDGE_PROTOCOL_VERSION
+    };
     if (this.isConnected) {
       this._client.send(JSON.stringify({ type: 'CLIENT_INFO', ...this._clientInfo }));
     }

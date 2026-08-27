@@ -10,12 +10,12 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(14, 16, 20, 0.35);
+    background: var(--overlay-backdrop);
     backdrop-filter: blur(14px);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10000;
+    z-index: var(--z-modal);
     animation: fadeIn 0.3s ease-out;
     padding: 0;
 }
@@ -314,7 +314,7 @@
     border-radius: 8px;
     font-size: 12px;
     line-height: 1.5;
-    color: #CA8A04;
+    color: var(--warning-color);
     background: rgba(202, 138, 4, 0.08);
     border: 1px solid rgba(202, 138, 4, 0.2);
 }
@@ -323,7 +323,7 @@
     flex-shrink: 0;
     margin-top: 1px;
     font-size: 13px;
-    color: #CA8A04;
+    color: var(--warning-color);
 }
 
 /* Loading Spinner */
@@ -387,7 +387,7 @@
     border-radius: 10px;
     box-shadow: var(--shadow-elevated);
     max-width: 400px;
-    z-index: 10001;
+    z-index: var(--z-fixed);
     animation: slideInRight 0.4s ease-out;
 }
 
@@ -403,16 +403,12 @@
     }
 }
 
-.toast-notification.success {
-    border-left: 4px solid var(--success-color, #48bb78);
-}
-
 .toast-notification.error {
     border-left: 4px solid var(--error-color, #f56565);
 }
 
-.toast-notification.info {
-    border-left: 4px solid var(--info-color, #4299e1);
+.toast-notification.warning {
+    border-left: 4px solid var(--warning-color, #ed8936);
 }
 
 .toast-notification .toast-message {
@@ -473,9 +469,9 @@
     flex-shrink: 0;
 }
 
-.capability-error .capability-icon { color: #ef4444; }
-.capability-warning .capability-icon { color: #f59e0b; }
-.capability-info .capability-icon { color: #3b82f6; }
+.capability-error .capability-icon { color: var(--error-color); }
+.capability-warning .capability-icon { color: var(--warning-color); }
+.capability-info .capability-icon { color: var(--info-color); }
 
 .capability-message {
     flex: 1;
@@ -504,8 +500,8 @@
 }
 
 .capability-details-btn {
-    background: var(--surface-border);
-    border: none;
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
     color: var(--text-primary);
     font-size: 0.8rem;
     padding: 0.35rem 0.75rem;
@@ -515,7 +511,8 @@
 }
 
 .capability-details-btn:hover {
-    background: var(--surface-border-strong);
+    background: var(--control-bg-hover);
+    border-color: var(--control-border-hover);
 }
 
 .capability-dismiss {
@@ -530,6 +527,13 @@
 
 .capability-dismiss:hover {
     opacity: 1;
+}
+
+.capability-details-btn:focus-visible,
+.capability-dismiss:focus-visible,
+.ml-modal-content button:focus-visible {
+    outline: 2px solid var(--focus-outline);
+    outline-offset: 2px;
 }
 
 /* Capability Modal */
@@ -563,8 +567,8 @@
     font-size: 1.1rem;
 }
 
-.capability-status.status-ok { color: #10b981; }
-.capability-status.status-warning { color: #f59e0b; }
+.capability-status.status-ok { color: var(--success-color); }
+.capability-status.status-warning { color: var(--warning-color); }
 
 .capability-detail {
     font-size: 0.85rem;
@@ -611,37 +615,37 @@
 
 .feature-badge.supported {
     background: rgba(16, 185, 129, 0.15);
-    color: #059669;
+    color: var(--success-color);
 }
 
 .feature-badge.unsupported {
     background: rgba(239, 68, 68, 0.15);
-    color: #dc2626;
+    color: var(--error-color);
 }
 
 /* Dark mode for capabilities */
-body.theme-dark .capability-banner {
+html.dark .capability-banner {
     background: rgba(30, 30, 30, 0.95);
 }
 
-body.theme-dark .capability-banner.capability-error {
+html.dark .capability-banner.capability-error {
     background: linear-gradient(90deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.05));
 }
 
-body.theme-dark .capability-banner.capability-warning {
+html.dark .capability-banner.capability-warning {
     background: linear-gradient(90deg, rgba(245, 158, 11, 0.15), rgba(245, 158, 11, 0.05));
 }
 
-body.theme-dark .capability-row {
+html.dark .capability-row {
     background: rgba(40, 40, 40, 0.8);
 }
 
-body.theme-dark .feature-badge.supported {
+html.dark .feature-badge.supported {
     background: rgba(16, 185, 129, 0.2);
     color: #34d399;
 }
 
-body.theme-dark .feature-badge.unsupported {
+html.dark .feature-badge.unsupported {
     background: rgba(239, 68, 68, 0.2);
     color: #f87171;
 }
@@ -671,12 +675,12 @@ body.theme-dark .feature-badge.unsupported {
 }
 
 .model-loading-icon.complete {
-    color: #10b981;
+    color: var(--success-color);
 }
 
 .model-loading-icon.pending {
     color: var(--text-muted);
-    opacity: 0.5;
+    opacity: 0.72;
 }
 
 .model-size-badge {
@@ -693,8 +697,8 @@ body.theme-dark .feature-badge.unsupported {
 }
 
 .model-size-badge.downloading {
-    background: var(--accent-primary-alpha, rgba(59, 130, 246, 0.1));
-    color: var(--accent-primary, #3b82f6);
+    background: color-mix(in srgb, var(--info-color) 10%, transparent);
+    color: var(--info-color);
 }
 
 .model-download-speed {
@@ -781,147 +785,127 @@ body.theme-dark .feature-badge.unsupported {
     }
 }
 
-body.theme-dark .ml-modal-content {
+html.dark .ml-modal-content {
     background: linear-gradient(180deg, #141414 0%, #0A0A0A 100%);
     border: 1px solid #333333;
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.9);
 }
 
-body.theme-dark .ml-modal-content h2 {
+html.dark .ml-modal-content h2 {
     color: #FFFFFF;
 }
 
-body.theme-dark .ml-modal-content>p {
+html.dark .ml-modal-content>p {
     color: #A3A3A3;
 }
 
-body.theme-dark .progress-bar {
+html.dark .progress-bar {
     background: #262626;
 }
 
-body.theme-dark .progress-fill {
+html.dark .progress-fill {
     background: linear-gradient(90deg, #FFFFFF 0%, #A3A3A3 100%);
 }
 
-body.theme-dark .model-loading-note {
+html.dark .model-loading-note {
     background: #1A1A1A;
     border-left-color: #FFFFFF;
     color: #D4D4D4;
 }
 
-/* Dark Mode Support (if needed) */
-@media (prefers-color-scheme: dark) {
-    .ml-modal-overlay {
-        background: rgba(0, 0, 0, 0.8);
-        backdrop-filter: blur(18px);
-    }
-
-    .ml-modal-content {
-        background: linear-gradient(180deg, #141414 0%, #0A0A0A 100%);
-        border: 1px solid #333333;
-        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.8);
-        color: #E5E5E5;
-    }
-
-    .ml-modal-content h2 {
-        color: #FFFFFF;
-    }
-
-    .ml-modal-content>p,
-    .model-progress-item label,
-    .processing-stage-item .stage-header,
-    .processing-stage-item .stage-status {
-        color: #A3A3A3;
-    }
-
-    .model-progress-item span,
-    .processing-message {
-        color: #737373;
-    }
-
-    .progress-bar {
-        background: #262626;
-    }
-
-    .progress-fill {
-        background: linear-gradient(90deg, #FFFFFF 0%, #A3A3A3 100%);
-    }
-
-    .processing-stage-item {
-        background: #141414;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    }
-
-    .processing-stage-item.active {
-        background: #262626;
-    }
-
-    .processing-stage-item.completed {
-        background: rgba(30, 30, 30, 1);
-        border: 1px solid #444444;
-    }
-
-    .loading-spinner {
-        border: 3px solid #333333;
-        border-top-color: #FFFFFF;
-    }
-
-    .toast-notification {
-        background: linear-gradient(180deg, #1A1A1A 0%, #0A0A0A 100%);
-        border: 1px solid #333333;
-        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.8);
-    }
-
-    .toast-notification .toast-message {
-        color: #FFFFFF;
-    }
-}
-
-/* Force ML modals to use the dark neutral palette in all themes */
-.ml-modal-overlay {
-    background: rgba(0, 0, 0, 0.85);
+html.dark .ml-modal-overlay {
+    background: var(--overlay-backdrop);
     backdrop-filter: blur(16px);
 }
 
-.ml-modal-content {
-    background: linear-gradient(180deg, #141414 0%, #0A0A0A 100%);
-    border: 1px solid #333333;
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.9);
-    color: #E5E5E5;
-    --surface-base: #1A1A1A;
-    --surface-subtle: #141414;
-    --surface-muted: #1F1F1F;
-    --surface-border: #333333;
-    --surface-border-strong: #444444;
-    --surface-inner-highlight: rgba(255, 255, 255, 0.05);
-    --text-primary: #FFFFFF;
-    --text-secondary: #A3A3A3;
-    --text-muted: #737373;
-    --shadow-subtle: 0 10px 24px rgba(0, 0, 0, 0.45);
-    --shadow-elevated: 0 24px 60px rgba(0, 0, 0, 0.8);
-}
-
-.processing-modal-header {
+html.dark .processing-modal-header {
     background: #1A1A1A;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 18px 32px rgba(0, 0, 0, 0.4);
 }
 
-.processing-modal-icon {
+html.dark .processing-modal-icon {
     background: #262626;
     color: #FFFFFF;
 }
 
-.processing-stage-item {
+html.dark .processing-stage-item {
     background: #141414;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.processing-stage-item.active {
+html.dark .processing-stage-item.active {
     background: #262626;
     border-left-color: #FFFFFF;
 }
 
-.processing-stage-item.completed {
+html.dark .processing-stage-item.completed {
     background: #1F1F1F;
-    border-left-color: #444444;
+    border-left-color: #707070;
+}
+
+html.dark .loading-spinner {
+    border-color: #333333;
+    border-top-color: #FFFFFF;
+}
+
+html.dark .toast-notification {
+    background: linear-gradient(180deg, #1A1A1A 0%, #0A0A0A 100%);
+    border-color: #333333;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.8);
+}
+
+html.dark .toast-notification .toast-message {
+    color: #FFFFFF;
+}
+
+/* Model setup progress uses the shared modal header/body structure. */
+.ml-modal-content.model-loading-content {
+    width: min(560px, 92%);
+    min-width: min(440px, 92vw);
+    padding: 0;
+    overflow: hidden;
+}
+
+.model-loading-content .processing-modal-header {
+    margin: 0;
+    border-radius: 0;
+}
+
+.model-loading-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.model-loading-body .model-progress-container {
+    margin: 0;
+}
+
+.model-progress-heading,
+.model-loading-note-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.model-loading-note-content {
+    justify-content: flex-start;
+}
+
+.model-loading-note-content > i {
+    color: var(--text-muted);
+}
+
+.model-loading-note-warning {
+    margin-top: 0;
+    border-left-color: var(--warning-color);
+}
+
+.model-loading-note-warning i {
+    color: var(--warning-color);
+}
+
+.model-loading-note-warning a {
+    color: var(--accent-color);
 }

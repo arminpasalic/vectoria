@@ -37,6 +37,12 @@ export class BrowserStorage {
             storeName: 'metadata',
             description: 'System metadata and settings'
         });
+
+        this.chatStore = localforage.createInstance({
+            name: 'vectoria',
+            storeName: 'conversations',
+            description: 'Local per-dataset document conversations'
+        });
     }
 
     /**
@@ -88,6 +94,28 @@ export class BrowserStorage {
         }
 
         if (typeof raw === 'object') {
+            // Current Vectoria datasets use parent embeddings for visualization /
+            // document search and embedded chunk records for RAG. Preserve the
+            // complete payload so a saved or imported dataset can rebuild both
+            // indexes after a reload.
+            if (Array.isArray(raw.parent) || ArrayBuffer.isView(raw.parent) || Array.isArray(raw.chunks)) {
+                const parent = raw.parent ?? raw.retrieval ?? raw.clustering ?? null;
+                const chunks = Array.isArray(raw.chunks) ? raw.chunks : [];
+                const dimension = raw.dimension
+                    || this._inferVectorDimension(parent)
+                    || this._inferVectorDimension(chunks[0]?.embedding);
+                return {
+                    parent,
+                    chunks,
+                    chunkToParentMap: raw.chunkToParentMap || raw.chunk_map || {},
+                    model: raw.model || 'unknown',
+                    dimension,
+                    schema: raw.schema || 'three-tier-v1',
+                    modes: raw.modes || { parent: 'query', chunks: 'passage' },
+                    legacy: false
+                };
+            }
+
             if (Array.isArray(raw.retrieval) || Array.isArray(raw.clustering) || ArrayBuffer.isView(raw.retrieval) || ArrayBuffer.isView(raw.clustering)) {
                 const retrieval = raw.retrieval ?? raw.passages ?? raw.vectors ?? raw.documents ?? null;
                 const clustering = raw.clustering ?? raw.queries ?? retrieval ?? null;
@@ -150,6 +178,10 @@ export class BrowserStorage {
 
         consume(embeddings.retrieval);
         consume(embeddings.clustering);
+        consume(embeddings.parent);
+        if (Array.isArray(embeddings.chunks)) {
+            for (const chunk of embeddings.chunks) consume(chunk?.embedding);
+        }
 
         return vectorCount * dim * 4;
     }
@@ -169,7 +201,11 @@ export class BrowserStorage {
                 clusters,
                 fileName,
                 fileType,
-                textColumn
+                textColumn,
+                metadataSchema,
+                emptyRowCount,
+                duplicateCount,
+                clusterKeywords
             } = data;
 
             const normalizedEmbeddings = this._normalizeEmbeddingsPayload(embeddings);
@@ -203,6 +239,10 @@ export class BrowserStorage {
                     numDocuments: documents.length,
                     embeddingModel: normalizedEmbeddings?.model || 'unknown',
                     embeddingSchema: normalizedEmbeddings?.schema || (normalizedEmbeddings ? 'single-embedding-legacy' : 'none'),
+                    metadataSchema: metadataSchema || null,
+                    emptyRowCount: emptyRowCount || 0,
+                    duplicateCount: duplicateCount || 0,
+                    clusterKeywords: clusterKeywords || null,
                     timestamp: Date.now()
                 })
             ]);
@@ -264,7 +304,11 @@ export class BrowserStorage {
                 projection: visualizationData?.projection,  // 2D for visualization
                 clusteringProjection: visualizationData?.clusteringProjection,  // ND for clustering
                 clusters: visualizationData?.clusters,
-                metadata: metadata
+                metadata: metadata,
+                metadataSchema: metadata?.metadataSchema || null,
+                emptyRowCount: metadata?.emptyRowCount || 0,
+                duplicateCount: metadata?.duplicateCount || 0,
+                clusterKeywords: metadata?.clusterKeywords || null
             };
         } catch (error) {
             console.error('❌ Failed to load dataset:', error);
@@ -313,7 +357,8 @@ export class BrowserStorage {
                 this.indexStore.removeItem(datasetId),
                 this.documentsStore.removeItem(datasetId),
                 this.visualizationStore.removeItem(datasetId),
-                this.metadataStore.removeItem(datasetId)
+                this.metadataStore.removeItem(datasetId),
+                this.chatStore.removeItem(`chat:${String(datasetId)}`)
             ]);
 
             return true;
@@ -332,7 +377,8 @@ export class BrowserStorage {
             this.indexStore.clear(),
             this.documentsStore.clear(),
             this.visualizationStore.clear(),
-            this.metadataStore.clear()
+            this.metadataStore.clear(),
+            this.chatStore.clear()
         ]);
 
     }
@@ -341,12 +387,13 @@ export class BrowserStorage {
      * Get storage statistics
      */
     async getStats() {
-        const [embKeys, idxKeys, docKeys, vizKeys, metaKeys] = await Promise.all([
+        const [embKeys, idxKeys, docKeys, vizKeys, metaKeys, chatKeys] = await Promise.all([
             this.embeddingsStore.keys(),
             this.indexStore.keys(),
             this.documentsStore.keys(),
             this.visualizationStore.keys(),
-            this.metadataStore.keys()
+            this.metadataStore.keys(),
+            this.chatStore.keys()
         ]);
 
         // Estimate storage usage (rough approximation)
@@ -367,6 +414,7 @@ export class BrowserStorage {
             numIndexes: idxKeys.length,
             numDocuments: docKeys.length,
             numVisualizations: vizKeys.length,
+            numConversations: chatKeys.length,
             estimatedSizeMB: (totalSize / (1024 * 1024)).toFixed(2),
             datasets: datasets
         };

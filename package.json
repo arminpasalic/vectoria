@@ -8,18 +8,17 @@
     "network": "lsof -ti:5050 | xargs kill -9 2>/dev/null || true && node start-network.js",
     "https": "lsof -ti:5050 | xargs kill -9 2>/dev/null || true && ./start-https.sh",
     "build": "node scripts/build-mcp.js",
+    "test": "npm run test:unit",
+    "test:unit": "node --test tests/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage tests/*.test.js",
+    "test:wasm": "npm --prefix web_interface/static/js/browser-ml/umap-wasm test",
+    "test:filters": "node --test tests/metadata-filters.test.js",
+    "test:syntax": "node scripts/check-syntax.js",
+    "check": "npm test && npm run test:wasm && npm run test:syntax && npm run build && npm run stamp:check",
     "stamp": "node scripts/stamp-version.js",
     "stamp:check": "node scripts/stamp-version.js --check",
     "release": "node scripts/stamp-version.js && node scripts/build-mcp.js",
     "preview": "npx serve web_interface -p 5050"
-  },
-  "dependencies": {
-    "@chonkiejs/core": "^0.0.11",
-    "@huggingface/transformers": "4.2.0",
-    "@mlc-ai/web-llm": "0.2.84",
-    "localforage": "^1.10.0",
-    "papaparse": "^5.5.4",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "serve": "^14.2.6"

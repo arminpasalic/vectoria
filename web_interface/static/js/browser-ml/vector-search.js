@@ -215,9 +215,6 @@ export class BrowserVectorSearch {
       }
     }
 
-    if (out.length > 0) {
-    }
-
     return out;
   }
 
@@ -519,8 +516,9 @@ export class BM25Search {
   /**
    * BM25 scoring touching only posted docs
    */
-  search(query, k = 10) {
+  search(query, k = 10, options = {}) {
     if (!this.isBuilt) throw new Error("BM25 index not built");
+    const { filter = null } = options;
 
     const qTerms = this.tokenize(query);
     if (qTerms.length === 0) return [];
@@ -551,7 +549,14 @@ export class BM25Search {
     }
 
     // Collect touched docs and rank
-    const candidates = Array.from(touched);
+    const candidates = Array.from(touched).filter(idx => {
+      if (!filter) return true;
+      const doc = this.documents[idx];
+      const metadata = (typeof doc === "object" && doc !== null)
+        ? { ...doc, ...(doc.metadata || {}) }
+        : doc;
+      return filter(metadata);
+    });
     candidates.sort((a, b) => scores[b] - scores[a]);
 
     const top = candidates.slice(0, k).map((idx) => {

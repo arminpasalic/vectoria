@@ -9,7 +9,10 @@ window.hydeMode = {
     currentQuery: null,
     generatedText: null,
     resolveCallback: null,
-    rejectCallback: null
+    rejectCallback: null,
+    resultMode: 'legacy',
+    previousFocus: null,
+    inertElements: []
 };
 
 /**
@@ -21,6 +24,7 @@ function initializeHyDEHandlers() {
     const modal = document.getElementById('hyde-review-modal');
     const closeBtn = document.getElementById('close-hyde-modal');
     const cancelBtn = document.getElementById('hyde-cancel');
+    const withoutBtn = document.getElementById('hyde-without');
     const searchBtn = document.getElementById('hyde-search');
     const originalQueryDiv = document.getElementById('hyde-original-query');
     const generatedTextarea = document.getElementById('hyde-generated-text');
@@ -62,20 +66,45 @@ function initializeHyDEHandlers() {
 
     });
 
-    // Close modal handlers
-    const closeModal = () => {
+    if (modal.dataset.hydeInitialized === 'true') return;
+    modal.dataset.hydeInitialized = 'true';
+
+    const restoreBackground = () => {
+        for (const item of window.hydeMode.inertElements || []) item.element.inert = item.wasInert;
+        window.hydeMode.inertElements = [];
+        const focusTarget = window.hydeMode.previousFocus;
+        window.hydeMode.previousFocus = null;
+        if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
+    };
+
+    const settleModal = (action = 'cancel') => {
         modal.style.display = 'none';
-        if (window.hydeMode.rejectCallback) {
-            window.hydeMode.rejectCallback(new Error('HyDE cancelled by user'));
-            window.hydeMode.rejectCallback = null;
+        const detailed = window.hydeMode.resultMode === 'detailed';
+        const resolve = window.hydeMode.resolveCallback;
+        const reject = window.hydeMode.rejectCallback;
+        window.hydeMode.resolveCallback = null;
+        window.hydeMode.rejectCallback = null;
+        restoreBackground();
+        if (detailed && resolve) {
+            resolve({ action });
+        } else if (reject) {
+            reject(new Error('HyDE cancelled by user'));
         }
     };
 
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    if (closeBtn) closeBtn.addEventListener('click', () => settleModal('cancel'));
+    if (cancelBtn) cancelBtn.addEventListener('click', () => settleModal('cancel'));
 
-    // Force users to click buttons - no backdrop click or Escape to close
-    // This ensures users make an explicit choice to Cancel or Search
+    if (withoutBtn) {
+        withoutBtn.addEventListener('click', () => {
+            modal.style.display = 'none';
+            const resolve = window.hydeMode.resolveCallback;
+            window.hydeMode.resolveCallback = null;
+            window.hydeMode.rejectCallback = null;
+            restoreBackground();
+            resolve?.({ action: 'without_hyde' });
+        });
+    }
 
     // Search with HyDE text
     if (searchBtn) {
@@ -90,14 +119,35 @@ function initializeHyDEHandlers() {
             }
 
             modal.style.display = 'none';
-
-            if (window.hydeMode.resolveCallback) {
-                window.hydeMode.resolveCallback(editedText);
-                window.hydeMode.resolveCallback = null;
-                window.hydeMode.rejectCallback = null;
-            }
+            const resolve = window.hydeMode.resolveCallback;
+            const detailed = window.hydeMode.resultMode === 'detailed';
+            window.hydeMode.resolveCallback = null;
+            window.hydeMode.rejectCallback = null;
+            restoreBackground();
+            resolve?.(detailed ? { action: 'use', text: editedText } : editedText);
         });
     }
+
+    modal.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            settleModal('cancel');
+            return;
+        }
+        if (event.key !== 'Tab') return;
+        const focusable = [...modal.querySelectorAll('button:not([disabled]):not([hidden]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+            .filter(element => element.offsetParent !== null);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    });
 
 }
 
@@ -107,7 +157,7 @@ function initializeHyDEHandlers() {
  * @param {string} generatedText - LLM-generated hypothetical answer
  * @returns {Promise<string>} Edited/approved text to use for search
  */
-function showHyDEReviewModal(originalQuery, generatedText) {
+function showHyDEReviewModal(originalQuery, generatedText, options = {}) {
     return new Promise((resolve, reject) => {
         const modal = document.getElementById('hyde-review-modal');
         const originalQueryDiv = document.getElementById('hyde-original-query');
@@ -123,14 +173,31 @@ function showHyDEReviewModal(originalQuery, generatedText) {
         window.hydeMode.generatedText = generatedText;
         window.hydeMode.resolveCallback = resolve;
         window.hydeMode.rejectCallback = reject;
+        window.hydeMode.resultMode = options?.detailed === true ? 'detailed' : 'legacy';
+        window.hydeMode.previousFocus = document.activeElement;
+        window.hydeMode.inertElements = [document.querySelector('header'), document.querySelector('main')]
+            .filter(Boolean)
+            .map(element => ({ element, wasInert: element.inert }));
+        window.hydeMode.inertElements.forEach(item => { item.element.inert = true; });
 
         // Populate modal
         originalQueryDiv.textContent = originalQuery;
         generatedTextarea.value = generatedText;
+        const withoutBtn = document.getElementById('hyde-without');
+        if (withoutBtn) withoutBtn.hidden = options?.detailed !== true;
 
         // Show modal
+        window.clearVisualizationTransientState?.();
         modal.style.display = 'flex';
+        requestAnimationFrame(() => generatedTextarea.focus());
     });
+}
+
+function cancelHyDEReview() {
+    const modal = document.getElementById('hyde-review-modal');
+    if (!modal || modal.style.display === 'none') return false;
+    document.getElementById('hyde-cancel')?.click();
+    return true;
 }
 
 /**
@@ -175,3 +242,4 @@ if (document.readyState === 'loading') {
 window.initializeHyDEHandlers = initializeHyDEHandlers;
 window.showHyDEReviewModal = showHyDEReviewModal;
 window.processHyDEQuery = processHyDEQuery;
+window.cancelHyDEReview = cancelHyDEReview;

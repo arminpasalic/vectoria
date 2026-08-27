@@ -1,18 +1,48 @@
 /**
  * Browser-based RAG (Retrieval-Augmented Generation) using WebLLM
- * Model: gemma-2-2b-it-q4f32_1-MLC-1k
- * Runs Gemma 2 2B locally in browser via WebGPU
+ * Runs the configured language model locally in the browser via WebGPU.
  */
 
-import { CreateWebWorkerMLCEngine, prebuiltAppConfig } from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm";
+import { CreateWebWorkerMLCEngine, hasModelInCache, prebuiltAppConfig } from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm";
 import { getModelConstraints } from "../model-constraints.js";
+// Defaults are owned by config-manager.js. Never re-declare them here: this
+// file previously kept its own copies, which silently drifted out of sync.
+import { DEFAULT_CONFIG } from "../config-manager.js";
+import { sanitizeCitationBounds } from "./chat-context.js";
+import { rerankAndDiversify } from "./retrieval-ranking.js";
 
-// Load cached real download sizes from previous downloads
-try {
-    const cached = localStorage.getItem('vectoria_model_download_sizes');
-    window.__webllmRealDownloadSizes = cached ? JSON.parse(cached) : {};
-} catch (_) {
-    window.__webllmRealDownloadSizes = {};
+/**
+ * WebLLM reports a weight shard that could not be fetched as
+ * "Failed to store <url> with error: Error: Network response was not ok".
+ * Note the capital N — a case-sensitive /network/ test misses it.
+ */
+const SHARD_DOWNLOAD_FAILURE = /failed to store .*(network response was not ok|failed to fetch|networkerror)/i;
+const MAX_SHARD_RETRIES = 3;
+const WEBLLM_APP_CONFIG = { ...prebuiltAppConfig, cacheBackend: 'indexeddb' };
+
+export async function isWebLLMModelCached(modelId) {
+    if (!modelId) return false;
+    try {
+        return await hasModelInCache(modelId, WEBLLM_APP_CONFIG);
+    } catch (error) {
+        console.warn('Unable to inspect the WebLLM model cache:', error);
+        return false;
+    }
+}
+
+function normalizeWebLLMMessages(messages) {
+    const systemParts = [];
+    const conversation = [];
+    for (const message of Array.isArray(messages) ? messages : []) {
+        const role = String(message?.role || '').toLowerCase();
+        const content = String(message?.content || '').trim();
+        if (!content) continue;
+        if (role === 'system') systemParts.push(content);
+        else if (role === 'user' || role === 'assistant') conversation.push({ role, content });
+    }
+    return systemParts.length
+        ? [{ role: 'system', content: systemParts.join('\n\n') }, ...conversation]
+        : conversation;
 }
 
 // Stall-based timeout: rejects only if no progress for `ms` milliseconds.
@@ -46,15 +76,15 @@ function makeStallTimeout(ms, label) {
 }
 
 export class BrowserRAG {
-    constructor(vectorSearch, chunkVectorSearch = null, bm25Search = null) {
+    constructor(vectorSearch, chunkVectorSearch = null, bm25Search = null, reranker = null) {
         this.vectorSearch = vectorSearch;        // Parent document index (not used for retrieval)
         this.chunkVectorSearch = chunkVectorSearch; // Chunk index for RAG retrieval
         this.bm25Search = bm25Search;            // BM25 keyword search for hybrid retrieval
+        this.reranker = reranker;                // Optional lazy multilingual cross-encoder
         this.engine = null;
         this.worker = null;
 
         // Abort control for stopping generation
-        this.shouldAbort = false;
         this.currentGenerationReject = null;
         this.needsReinit = false; // Flag to track if engine needs reinitialization after abort
         this.workerUnloaded = false; // Set true by unloadWorker() to permanently block re-init
@@ -65,54 +95,67 @@ export class BrowserRAG {
         this._idleTimer = null;
         this._idleTimeoutMs = 5 * 60 * 1000; // 5 min idle → auto-suspend
 
+        // Every local generation surface (Chat, HyDE, cluster labels, one-shot
+        // RAG and MCP local generation) shares one WebLLM engine. Keep a single
+        // explicit owner so concurrent features cannot issue overlapping engine
+        // requests or accidentally stop/unload one another.
+        this._activeOperation = null;
+        this._operationSequence = 0;
+
         // Load saved configuration
         const savedConfig = this.loadSavedConfig();
 
+        // Every fallback below comes from DEFAULT_CONFIG so this file can never
+        // drift from the shipped defaults. Change values in config-manager.js.
+        const llmDefaults = DEFAULT_CONFIG.llm;
+        const searchDefaults = DEFAULT_CONFIG.search;
+        const promptDefaults = DEFAULT_CONFIG.rag_prompts;
+        const hydeDefaults = DEFAULT_CONFIG.hyde;
+
         // Load model ID from saved config or use default
-        this.modelId = savedConfig.model_id || "gemma-2-2b-it-q4f16_1-MLC";
+        this.modelId = savedConfig.model_id || llmDefaults.model_id;
 
         // Get model constraints
         this.modelConstraints = getModelConstraints(this.modelId);
 
         this.isInitialized = false;
 
+        // Recovery counters for initialize(). Declared here so the first load
+        // compares against real numbers rather than undefined.
+        this._idbRetried = false;
+        this._shardRetries = 0;
+
         // Load LLM generation parameters from saved config
-        this.temperature = savedConfig.temperature || 0.5;
-        this.maxTokens = savedConfig.max_tokens || 1024;
-        this.topP = savedConfig.top_p || 0.9;
-        this.repeatPenalty = savedConfig.repeat_penalty || 1.25;
-        this.maxContextLength = savedConfig.context_window_size || this.modelConstraints.contextWindow || 2048;
+        this.temperature = savedConfig.temperature ?? llmDefaults.temperature;
+        this.maxTokens = savedConfig.max_tokens ?? llmDefaults.max_tokens;
+        this.topP = savedConfig.top_p ?? llmDefaults.top_p;
+        this.repeatPenalty = savedConfig.repeat_penalty ?? llmDefaults.repeat_penalty;
+        this.reasoningMode = savedConfig.reasoning_mode ?? llmDefaults.reasoning_mode;
+        // Never fall back to the model's own ceiling: long-context models report
+        // 128K-256K there, and allocating a KV cache that size would exhaust VRAM.
+        this.maxContextLength = Math.min(
+            savedConfig.context_window_size || llmDefaults.context_window_size,
+            this.modelConstraints.contextWindow || llmDefaults.context_window_size
+        );
 
         // Load RAG parameters
-        this.numResults = savedConfig.num_results || 5;
-        this.similarityThreshold = savedConfig.similarity_threshold || 0.7;  // e5-base-v2 range: 0.7-1.0
-        this.retrievalK = savedConfig.retrieval_k || 60;
-        this.vectorWeight = savedConfig.vector_weight !== undefined ? savedConfig.vector_weight : 0.6;
-        this.maxChunksPerParent = savedConfig.max_chunks_per_parent || 5;  // Limit chunks per parent to prevent context overflow
+        this.numResults = savedConfig.num_results ?? searchDefaults.num_results;
+        this.similarityThreshold = savedConfig.similarity_threshold ?? searchDefaults.similarity_threshold;
+        this.retrievalK = savedConfig.retrieval_k ?? searchDefaults.retrieval_k;
+        this.vectorWeight = savedConfig.vector_weight ?? searchDefaults.vector_weight;
+        this.maxChunksPerParent = savedConfig.max_chunks_per_parent ?? searchDefaults.max_chunks_per_parent;
 
         // Conversation history for export
         this.conversationHistory = [];
 
         // Load RAG prompts
-        this.systemPrompt = savedConfig.system_prompt ||
-`You are a helpful assistant answering questions based on provided documents.
-Use [Doc N] to cite sources. If information is missing, say so. Keep answers clear and focused.`;
-
-        this.userTemplate = savedConfig.user_template ||
-`Documents:
-{context}
-
-Question: {question}
-
-Answer based on the documents above:`;
+        this.systemPrompt = savedConfig.system_prompt || promptDefaults.system_prompt;
+        this.userTemplate = savedConfig.user_template || promptDefaults.user_template;
 
         // Load HyDE prompts and settings
-        this.hydePrompt = savedConfig.hyde_prompt ||
-`Write a short factual paragraph that could answer this question:`;
-
-        this.hydeTemperature = savedConfig.hyde_temperature !== undefined ? savedConfig.hyde_temperature : 0.2;
-        this.hydeMaxTokens = savedConfig.hyde_max_tokens !== undefined ? savedConfig.hyde_max_tokens : 256;
-
+        this.hydePrompt = savedConfig.hyde_prompt || hydeDefaults.prompt;
+        this.hydeTemperature = savedConfig.hyde_temperature ?? hydeDefaults.temperature;
+        this.hydeMaxTokens = savedConfig.hyde_max_tokens ?? hydeDefaults.max_tokens;
     }
 
     /**
@@ -123,13 +166,190 @@ Answer based on the documents above:`;
         return this.modelConstraints;
     }
 
+    /** Append Qwen3's documented mode switch to the final user turn. */
+    _applyReasoningSwitch(messages) {
+        if (this.modelConstraints?.responseMode !== 'switchable') return messages;
+        const configuredMode = window.ConfigManager?.getConfig()?.llm?.reasoning_mode
+            || this.reasoningMode
+            || 'direct';
+        const control = configuredMode === 'reasoning'
+            ? this.modelConstraints?.thinkSwitch
+            : this.modelConstraints?.noThinkSwitch;
+        if (!control) return messages;
+        for (let index = messages.length - 1; index >= 0; index--) {
+            const message = messages[index];
+            if (message.role !== 'user') continue;
+            if (String(message.content).includes(control)) return messages;
+            const next = messages.slice();
+            next[index] = { ...message, content: `${message.content}\n\n${control}` };
+            return next;
+        }
+        return messages;
+    }
+
+    /** Single choke point for everything handed to WebLLM's chat completions. */
+    _chatMessages(messages) {
+        return this._applyReasoningSwitch(normalizeWebLLMMessages(messages));
+    }
+
+    /** Role-only prompt diagnostics. Never include user or document content. */
+    _promptCompatibilityDiagnostic(messages) {
+        const roles = Array.from(messages || [], message => message.role);
+        const gemmaWithoutSystemRole = /^(?:gemma-2-|gemma3-)/i.test(this.modelId || '');
+        const foldedFirstUserRoles = gemmaWithoutSystemRole && roles[0] === 'system'
+            ? (roles.length > 1 ? roles.slice(1) : ['user'])
+            : null;
+        return {
+            modelFamily: gemmaWithoutSystemRole ? 'gemma-legacy-chat-template' : 'native-or-mlc-system-template',
+            roles,
+            messageCount: roles.length,
+            foldedFirstUserRoles
+        };
+    }
+
+    get activeOperation() {
+        if (!this._activeOperation) return null;
+        const { id, owner, datasetId, startedAt, phase } = this._activeOperation;
+        return { id, owner, datasetId, startedAt, phase };
+    }
+
+    get isGenerating() {
+        return this._activeOperation !== null;
+    }
+
+    get shouldAbort() {
+        return this._activeOperation?.cancelled === true;
+    }
+
+    _operationLabel(owner) {
+        return ({
+            chat: 'answering an Ask question',
+            hyde: 'creating a HyDE retrieval hypothesis',
+            'cluster-label': 'labelling clusters',
+            'suggested-questions': 'drafting suggested questions',
+            rag: 'answering a RAG question',
+            mcp: 'answering a connected-client request'
+        })[owner] || 'running another local AI task';
+    }
+
+    _emitOperationState(operation, phase, detail = {}) {
+        if (operation && this._activeOperation?.id === operation.id) {
+            this._activeOperation.phase = phase;
+        }
+        if (typeof document !== 'undefined') {
+            document.dispatchEvent(new CustomEvent('vectoria:local-ai-operation', {
+                detail: {
+                    active: phase !== 'idle',
+                    operation: operation ? this.activeOperation : null,
+                    phase,
+                    ...detail
+                }
+            }));
+        }
+    }
+
+    beginOperation(owner = 'local-ai', { datasetId = null } = {}) {
+        if (this._activeOperation) {
+            const error = new Error(`Local AI is currently ${this._operationLabel(this._activeOperation.owner)}. Stop or finish that task before starting another.`);
+            error.code = 'local_ai_busy';
+            error.activeOwner = this._activeOperation.owner;
+            throw error;
+        }
+        const operation = {
+            id: ++this._operationSequence,
+            owner,
+            datasetId: datasetId === undefined || datasetId === null ? null : String(datasetId),
+            startedAt: Date.now(),
+            phase: 'starting',
+            cancelled: false,
+            cancelReason: null,
+            abortController: typeof AbortController === 'function' ? new AbortController() : null
+        };
+        this._activeOperation = operation;
+        this._clearIdleTimer();
+        this._emitOperationState(operation, 'starting');
+        return operation;
+    }
+
+    assertOperation(operation) {
+        if (!operation || this._activeOperation?.id !== operation.id) {
+            const error = new Error('The local AI task is no longer active.');
+            error.code = 'local_ai_operation_stale';
+            throw error;
+        }
+        return this._activeOperation;
+    }
+
+    throwIfOperationCancelled(operation) {
+        const active = this.assertOperation(operation);
+        if (!active.cancelled) return;
+        const error = new Error(active.cancelReason || 'Generation aborted');
+        error.name = 'AbortError';
+        error.code = 'local_ai_aborted';
+        throw error;
+    }
+
+    setOperationPhase(operation, phase, detail = {}) {
+        this.assertOperation(operation);
+        this._emitOperationState(operation, phase, detail);
+        if (phase === 'awaiting-input') this._scheduleIdleSuspend();
+    }
+
+    endOperation(operation, { state = 'idle' } = {}) {
+        if (!operation || this._activeOperation?.id !== operation.id) return false;
+        const finished = this._activeOperation;
+        this._activeOperation = null;
+        this.currentGenerationReject = null;
+        this._scheduleIdleSuspend();
+        this._emitOperationState(finished, state);
+        return true;
+    }
+
+    async withOperation(owner, options, task) {
+        const supplied = options?.operationToken || null;
+        const operation = supplied || this.beginOperation(owner, { datasetId: options?.datasetId });
+        const ownsOperation = !supplied;
+        this.assertOperation(operation);
+        try {
+            // A multi-stage owner may be stopped while it is embedding or
+            // retrieving. Do not erase that stop or warm WebLLM afterward.
+            if (supplied) this.throwIfOperationCancelled(operation);
+            return await task(operation);
+        } finally {
+            if (ownsOperation) this.endOperation(operation);
+        }
+    }
+
     /**
      * Abort the current RAG generation
      * Sets a flag that the streaming loop checks to stop gracefully
      */
-    abort() {
-        this.shouldAbort = true;
+    abort(ownerOrOperation = null) {
+        if (!this._activeOperation) return false;
+        if (ownerOrOperation) {
+            const requestedId = typeof ownerOrOperation === 'object' ? ownerOrOperation.id : null;
+            const requestedOwner = typeof ownerOrOperation === 'string' ? ownerOrOperation : null;
+            if ((requestedId && requestedId !== this._activeOperation.id)
+                || (requestedOwner && requestedOwner !== this._activeOperation.owner)) {
+                return false;
+            }
+        }
+        this._activeOperation.cancelled = true;
+        this._activeOperation.cancelReason = 'Generation stopped by user';
+        this._activeOperation.abortController?.abort?.();
         this._clearIdleTimer();
+
+        // Model restoration/download has no engine yet to interrupt. Terminate
+        // its worker so Stop does not wait for a multi-gigabyte cold load to
+        // finish; cached chunks remain reusable on the next attempt.
+        if (this._activeOperation?.phase === 'loading-model' && this.worker && !this.engine) {
+            try { this.worker.terminate(); } catch (_) {}
+            this.worker = null;
+            this.engine = null;
+            this.isInitialized = false;
+            this.needsReinit = false;
+            this.isSuspended = true;
+        }
 
         // Try to interrupt the WebLLM engine directly
         if (this.engine && typeof this.engine.interruptGenerate === 'function') {
@@ -139,9 +359,41 @@ Answer based on the documents above:`;
         if (this.currentGenerationReject) {
             this.currentGenerationReject(new Error('Generation stopped by user'));
         }
+        if (this._activeOperation) this._emitOperationState(this._activeOperation, 'stopping');
+        return true;
+    }
+
+    async resetConversationState() {
+        if (this._activeOperation || !this.engine || !this.isInitialized) return false;
+        try {
+            await this.engine.resetChat?.();
+            return true;
+        } catch (error) {
+            console.warn('Unable to reset WebLLM conversation cache:', error);
+            return false;
+        }
+    }
+
+    async _resetEngineChatBestEffort(purpose) {
+        if (!this.engine || typeof this.engine.resetChat !== 'function') return false;
+        try {
+            await this.engine.resetChat();
+            return true;
+        } catch (error) {
+            console.warn(`Unable to reset WebLLM state before ${purpose}:`, {
+                name: error?.name || null,
+                message: error?.message || String(error || 'Unknown reset error'),
+                constructor: error?.constructor?.name || typeof error
+            });
+            return false;
+        }
     }
 
     unloadWorker() {
+        if (this._activeOperation) {
+            console.warn(`LLM unload skipped while ${this._activeOperation.owner} owns local generation`);
+            return false;
+        }
         this._clearIdleTimer();
         if (this.worker) {
             try { this.worker.terminate(); } catch (_) {}
@@ -153,6 +405,7 @@ Answer based on the documents above:`;
         this.isSuspended = false;
         this.workerUnloaded = true; // Block any future re-initialization
         console.log('🤖 LLM worker unloaded — re-init blocked until page reload');
+        return true;
     }
 
     /**
@@ -162,11 +415,15 @@ Answer based on the documents above:`;
      */
     suspendWorker(reason = 'idle') {
         this._clearIdleTimer();
+        if (this._activeOperation && this._activeOperation.phase !== 'awaiting-input') {
+            console.warn(`LLM suspension skipped while ${this._activeOperation.owner} owns local generation`);
+            return false;
+        }
         if (!this.worker && !this.isInitialized) {
-            return;
+            return true;
         }
         if (this.workerUnloaded) {
-            return; // Permanent unload already in effect
+            return true; // Permanent unload already in effect
         }
         if (this.worker) {
             try { this.worker.terminate(); } catch (_) {}
@@ -177,6 +434,7 @@ Answer based on the documents above:`;
         this.needsReinit = false;
         this.isSuspended = true;
         console.log(`🤖 LLM worker suspended (${reason}) — will lazy-reload on next query`);
+        return true;
     }
 
     /**
@@ -205,19 +463,22 @@ Answer based on the documents above:`;
         return this.worker !== null && this.isInitialized;
     }
 
-    /**
-     * Reset abort state (called before starting new generation)
-     */
-    resetAbort() {
-        const wasAborted = this.shouldAbort;
-        this.shouldAbort = false;
-        this.currentGenerationReject = null;
+    async _initializeWithAbort(onProgress = null, operation = null) {
+        let rejectAbort;
+        const abortPromise = new Promise((_, reject) => { rejectAbort = reject; });
+        this.currentGenerationReject = rejectAbort;
+        try {
+            if (operation) this.throwIfOperationCancelled(operation);
+            return await Promise.race([this.initialize(onProgress), abortPromise]);
+        } finally {
+            if (this.currentGenerationReject === rejectAbort) this.currentGenerationReject = null;
+        }
     }
 
     /**
      * Reinitialize the engine (needed after abort corrupts the engine state)
      */
-    async reinitializeEngine() {
+    async reinitializeEngine(onProgress = null, operation = null) {
         if (this.workerUnloaded) {
             console.log('🤖 LLM reinitializeEngine() skipped — worker intentionally unloaded');
             return;
@@ -234,41 +495,54 @@ Answer based on the documents above:`;
         this.needsReinit = false;
 
         // Reinitialize
-        await this.initialize();
+        await this._initializeWithAbort(onProgress, operation);
     }
 
     /**
      * Check if engine needs reinitialization and do it if needed
      */
-    async ensureEngineReady() {
+    async ensureEngineReady(onStatus = null, operation = null) {
+        this._clearIdleTimer();
+        // WASM reranking is intentionally short-lived around local generation.
+        // Terminating its worker releases linear memory before WebLLM allocates
+        // or expands the local model runtime.
+        this.reranker?.releaseForGeneration?.();
         if (this.workerUnloaded) {
             throw new Error('Local LLM is unloaded. Use query_rag_external (Claude as RAG) instead, or reload the page to re-enable the local LLM.');
         }
-        // If soft-suspended, transparently resume (model files are still cached in IndexedDB)
-        if (this.isSuspended && !this.isInitialized) {
-            console.log('🤖 LLM was suspended — resuming for query...');
+        // Cached installations and soft-suspended sessions both start cold.
+        // Transparently create the runtime only once a processed dataset query
+        // actually needs generation; model files remain cached in IndexedDB.
+        if (!this.isInitialized) {
+            onStatus?.('loading-model', { cached: true });
+            if (operation) this._emitOperationState(operation, 'loading-model');
+            console.log(this.isSuspended
+                ? '🤖 LLM was suspended — resuming for query...'
+                : '🤖 LLM is cached — loading for first query...');
             this.isSuspended = false;
-            await this.initialize();
+            await this._initializeWithAbort(progress => {
+                onStatus?.('model-progress', progress);
+                if (operation) this._emitOperationState(operation, 'loading-model', { progress });
+            }, operation);
+            onStatus?.('model-ready', { cached: true });
         }
         if (this.needsReinit) {
-            await this.reinitializeEngine();
+            onStatus?.('loading-model', { recovering: true });
+            await this.reinitializeEngine(progress => onStatus?.('model-progress', progress), operation);
         }
-        if (!this.isInitialized) {
-            throw new Error('LLM not initialized. Call initialize() first.');
-        }
-        // Verify engine can actually respond — ModelNotLoadedError means the worker
-        // process was created but reload() never completed (e.g. after IDB cache wipe)
-        try {
-            await this.engine.runtimeStatsText();
-        } catch (e) {
-            const msg = e?.message || '';
-            if (msg.includes('ModelNotLoaded') || msg.includes('not loaded')) {
-                console.warn('⚠️ Engine exists but model not loaded, reinitializing...');
-                this.isInitialized = false;
-                this._idbRetried = false;
-                await this.reinitializeEngine();
-            }
-        }
+        if (!this.isInitialized) throw new Error('LLM could not be initialized.');
+        if (operation) this.throwIfOperationCancelled(operation);
+    }
+
+    async recoverEngine(operation, onStatus = null) {
+        this.throwIfOperationCancelled(operation);
+        onStatus?.('loading-model', { recovering: true });
+        this.needsReinit = true;
+        this._idbRetried = false;
+        this._shardRetries = 0;
+        await this.reinitializeEngine(progress => onStatus?.('model-progress', progress), operation);
+        this.throwIfOperationCancelled(operation);
+        return this.isInitialized;
     }
 
     /**
@@ -287,12 +561,14 @@ Answer based on the documents above:`;
                     max_tokens: config.llm?.max_tokens,
                     top_p: config.llm?.top_p,
                     repeat_penalty: config.llm?.repeat_penalty,
+                    reasoning_mode: config.llm?.reasoning_mode,
                     context_window_size: config.llm?.context_window_size,
                     // RAG settings
                     num_results: config.search?.num_results,
                     similarity_threshold: config.search?.similarity_threshold,
                     retrieval_k: config.search?.retrieval_k,
                     vector_weight: config.search?.vector_weight,
+                    reranker_enabled: config.search?.reranker_enabled,
                     max_chunks_per_parent: config.search?.max_chunks_per_parent,
                     // RAG Prompts
                     system_prompt: config.rag_prompts?.system_prompt,
@@ -344,7 +620,6 @@ Answer based on the documents above:`;
                 type: 'module'
             });
 
-            const captureModelId = this.modelId;
             const stall = makeStallTimeout(120000, 'LLM model download');
             const enginePromise = CreateWebWorkerMLCEngine(
                 this.worker,
@@ -352,29 +627,23 @@ Answer based on the documents above:`;
                 {
                     initProgressCallback: (progress) => {
                         stall.reset();
-                        // Capture real total download size from progress text (e.g. "3.2GB/7.1GB")
-                        if (progress.text) {
-                            const sizeMatch = progress.text.match(/\/([\d.]+)\s*(GB|MB)/i);
-                            if (sizeMatch) {
-                                const val = parseFloat(sizeMatch[1]);
-                                const unit = sizeMatch[2].toUpperCase();
-                                const sizeStr = val + ' ' + unit;
-                                if (!window.__webllmRealDownloadSizes[captureModelId] || window.__webllmRealDownloadSizes[captureModelId] !== sizeStr) {
-                                    window.__webllmRealDownloadSizes[captureModelId] = sizeStr;
-                                    try { localStorage.setItem('vectoria_model_download_sizes', JSON.stringify(window.__webllmRealDownloadSizes)); } catch (_) {}
-                                }
-                            }
-                        }
                         // Only send to UI callback for modal display
                         if (onProgress) {
+                            const text = String(progress.text || '');
+                            const phase = /^Fetching param cache/i.test(text)
+                                ? 'download'
+                                : /^Loading model from cache/i.test(text)
+                                    ? 'loading-cache'
+                                    : 'preparing';
                             onProgress({
                                 status: 'loading',
-                                text: progress.text,
-                                progress: progress.progress || 0
+                                text,
+                                progress: progress.progress ?? 0,
+                                phase
                             });
                         }
                     },
-                    appConfig: { ...prebuiltAppConfig, cacheBackend: "indexeddb" }
+                    appConfig: WEBLLM_APP_CONFIG
                 },
                 // chatOpts (third arg) — overrides for mlc-chat-config.json.
                 // Disable sliding window so models like Gemma 3 (which default to SWA=512)
@@ -404,6 +673,7 @@ Answer based on the documents above:`;
             }
 
             this.isInitialized = true;
+            this.isSuspended = false;
             console.log = originalConsoleLog;
             console.info = originalConsoleInfo;
             console.warn = originalConsoleWarn;
@@ -449,16 +719,34 @@ Answer based on the documents above:`;
                 return this.initialize(onProgress);
             }
 
+            // A single weight shard failing mid-download is usually transient
+            // (CDN hiccup, flaky connection). Shards already stored stay
+            // cached, so retrying resumes rather than restarting the download.
+            if (SHARD_DOWNLOAD_FAILURE.test(rawMsg) && this._shardRetries < MAX_SHARD_RETRIES) {
+                this._shardRetries += 1;
+                originalConsoleWarn(
+                    `⚠️ Model shard download failed (attempt ${this._shardRetries}/${MAX_SHARD_RETRIES}), retrying…`
+                );
+                onProgress?.({
+                    status: 'loading',
+                    text: `Download interrupted — retrying (${this._shardRetries}/${MAX_SHARD_RETRIES})…`,
+                    progress: 0
+                });
+                await new Promise(resolve => setTimeout(resolve, 1000 * this._shardRetries));
+                return this.initialize(onProgress);
+            }
+
             console.error('❌ Failed to initialize LLM:', error);
             let msg = rawMsg;
             if (rawMsg.includes('ArtifactIndexedDBCache')) {
                 msg = `Model cache is corrupted. Please go to Advanced Settings → Language Model → "Clear Model Cache" and try again.`;
-            } else if (rawMsg.includes('Cache') && rawMsg.includes('network')) {
+            } else if (SHARD_DOWNLOAD_FAILURE.test(rawMsg) || /network|fetch|failed to store/i.test(rawMsg)) {
                 msg = `Model download failed (network error). This usually means:\n` +
                     `• The model files couldn't be fetched from HuggingFace\n` +
                     `• A firewall or VPN is blocking the download\n` +
                     `• HuggingFace is temporarily unavailable\n\n` +
-                    `Try refreshing the page or switching to a different model in Advanced Settings.`;
+                    `Your progress is cached, so retrying continues where it stopped. ` +
+                    `Try again, or switch to a smaller model in Settings → Models.`;
             }
             throw new Error(`LLM initialization failed: ${msg}`);
         } finally {
@@ -475,84 +763,69 @@ Answer based on the documents above:`;
      * @param {string} question - User question
      * @returns {Promise<string>} Generated hypothetical answer
      */
-    async generateHyDE(question) {
-        // Ensure engine is ready (reinitialize if needed after abort)
-        await this.ensureEngineReady();
+    async generateHyDE(question, options = {}) {
+        return this.withOperation(options.owner || 'hyde', options, async operation => {
+            await this.ensureEngineReady(options.onStatus, operation);
+            await this._resetEngineChatBestEffort('HyDE generation');
 
-        let maxTokens = this.hydeMaxTokens;
+            const freshConfig = this.loadSavedConfig();
+            const hydePrompt = options.prompt || freshConfig.hyde_prompt || this.hydePrompt;
+            const hydeTemperature = options.temperature ?? freshConfig.hyde_temperature ?? this.hydeTemperature;
+            let maxTokens = options.maxTokens ?? freshConfig.hyde_max_tokens ?? this.hydeMaxTokens;
 
-        // Think-mode models need extra token budget for reasoning + answer
-        if (this.modelConstraints?.hasThinkMode) {
-            const boosted = maxTokens * 3;
-            maxTokens = Math.min(boosted, this.modelConstraints.maxTokens[1]);
-        }
+            // Think-mode models need extra token budget for reasoning + answer
+            if (this.modelConstraints?.hasThinkMode) {
+                const boosted = maxTokens * 3;
+                maxTokens = Math.min(boosted, this.modelConstraints.maxTokens[1]);
+            }
 
-        const userPrompt = `${this.hydePrompt}
+            const userPrompt = `${hydePrompt}
 
 ${question}`;
 
-        try {
-            // Use streaming API for abort support
-            const completion = await this.engine.chat.completions.create({
-                messages: [
-                    {
-                        role: "user",
-                        content: userPrompt
+            try {
+                this._emitOperationState(operation, 'generating');
+                const completion = await this.engine.chat.completions.create({
+                    messages: this._chatMessages([{ role: 'user', content: userPrompt }]),
+                    temperature: hydeTemperature,
+                    max_tokens: maxTokens,
+                    top_p: 0.9,
+                    stream: true
+                });
+
+                let hydeText = '';
+                let wasStopped = false;
+                const thinkFilter = this._createThinkFilter();
+
+                for await (const chunk of completion) {
+                    if (this.shouldAbort) {
+                        wasStopped = true;
+                        break;
                     }
-                ],
-                temperature: this.hydeTemperature,
-                max_tokens: maxTokens,
-                top_p: 0.9,
-                stream: true
-            });
-
-            let hydeText = '';
-            let wasStopped = false;
-            const thinkFilter = this._createThinkFilter();
-
-            for await (const chunk of completion) {
-                // Check abort flag between chunks
-                if (this.shouldAbort) {
-                    wasStopped = true;
-                    break;
+                    const content = chunk.choices[0]?.delta?.content || '';
+                    hydeText += thinkFilter.push(content);
                 }
-                const content = chunk.choices[0]?.delta?.content || '';
-                hydeText += thinkFilter.push(content);
+
+                hydeText += thinkFilter.flush();
+                if (wasStopped) {
+                    this.needsReinit = true;
+                    throw new Error('HyDE generation stopped by user');
+                }
+
+                return this._stripThinkingTokens(hydeText);
+            } catch (error) {
+                console.error('❌ HyDE generation failed:', error);
+                throw new Error(`Failed to generate HyDE: ${error.message}`);
             }
-
-            hydeText += thinkFilter.flush();
-
-            // If we aborted, mark engine for reinitialization
-            if (wasStopped) {
-                this.needsReinit = true;
-                throw new Error('HyDE generation stopped by user');
-            }
-
-            hydeText = this._stripThinkingTokens(hydeText);
-            return hydeText;
-        } catch (error) {
-            console.error('❌ HyDE generation failed:', error);
-            throw new Error(`Failed to generate HyDE: ${error.message}`);
-        }
+        });
     }
 
     /**
-     * Perform RAG query
-     * @param {string} question - User question
-     * @param {number[]} questionEmbedding - Embedding of the question
-     * @param {Object} options - Query options
-     * @returns {Promise<Object>} RAG response with answer and sources
+     * Retrieve and format RAG context without initializing the local LLM.
+     * This is the common retrieval path for connected-AI generation and MCP.
      */
-    async query(question, questionEmbedding, options = {}) {
-        // Ensure engine is ready (reinitialize if needed after abort)
-        await this.ensureEngineReady();
-
-        // Reload config before each query to pick up setting changes
+    async retrieveContext(question, questionEmbedding, options = {}) {
         const freshConfig = this.loadSavedConfig();
-        if (freshConfig.temperature !== undefined) this.temperature = freshConfig.temperature;
-        if (freshConfig.max_tokens) this.maxTokens = freshConfig.max_tokens;
-        if (freshConfig.top_p !== undefined) this.topP = freshConfig.top_p;
-        if (freshConfig.repeat_penalty !== undefined) this.repeatPenalty = freshConfig.repeat_penalty;
         if (freshConfig.num_results) this.numResults = freshConfig.num_results;
         if (freshConfig.similarity_threshold !== undefined) this.similarityThreshold = freshConfig.similarity_threshold;
         if (freshConfig.retrieval_k !== undefined) this.retrievalK = freshConfig.retrieval_k;
@@ -563,310 +836,260 @@ ${question}`;
 
         const {
             numResults = this.numResults,
-            temperature: rawTemperature = this.temperature,
-            maxTokens: rawMaxTokens = this.maxTokens,
             includeMetadata = true,
+            metadataFields = undefined,
             similarityThreshold = this.similarityThreshold,
             allowedDocIds = null,
             retrievalK = this.retrievalK ?? this.numResults * 3
         } = options;
-
-        // Clamp parameters to model constraints
-        const temperature = Math.max(
-            this.modelConstraints.temp[0],
-            Math.min(this.modelConstraints.temp[1], rawTemperature)
-        );
-        let maxTokens = Math.max(
-            this.modelConstraints.maxTokens[0],
-            Math.min(this.modelConstraints.maxTokens[1], rawMaxTokens)
-        );
-
-        // Think-mode models need extra token budget for reasoning + answer
-        if (this.modelConstraints?.hasThinkMode) {
-            const boosted = maxTokens * 3;
-            maxTokens = Math.min(boosted, this.modelConstraints.maxTokens[1]);
-        }
-
-        if (temperature !== rawTemperature) {
-            console.warn(`⚠️ Temperature ${rawTemperature} clamped to ${temperature} (model range: ${this.modelConstraints.temp[0]}-${this.modelConstraints.temp[1]})`);
-        }
-        if (maxTokens !== rawMaxTokens && !this.modelConstraints?.hasThinkMode) {
-            console.warn(`⚠️ MaxTokens ${rawMaxTokens} clamped to ${maxTokens} (model range: ${this.modelConstraints.maxTokens[0]}-${this.modelConstraints.maxTokens[1]})`);
-        }
-
-        const requestedSearchType = options.searchType ? String(options.searchType).toLowerCase() : 'semantic';
-        if (requestedSearchType !== 'semantic' && requestedSearchType) {
-            console.warn(`Keyword retrieval mode is no longer supported for RAG. Using semantic vectors instead (requested: ${requestedSearchType}).`);
-        }
-        const normalizedSearchType = 'semantic';
-
+        const vectorWeight = options.vectorWeight !== undefined ? options.vectorWeight : this.vectorWeight;
+        const rerankerEnabled = options.rerankerEnabled !== undefined
+            ? options.rerankerEnabled === true
+            : freshConfig.reranker_enabled === true;
+        const rankingQuery = String(options.keywordQuery || question);
         const allowedDocIdSet = this._normalizeDocScope(allowedDocIds);
-        if (allowedDocIdSet) {
-        }
-        const scopeMetadata = allowedDocIdSet ? { type: 'doc_filter', size: allowedDocIdSet.size } : null;
         const allowDoc = (candidate) => {
-            if (!allowedDocIdSet) {
-                return true;
-            }
-            if (candidate === undefined || candidate === null) {
-                return false;
-            }
+            if (!allowedDocIdSet) return true;
+            if (candidate === undefined || candidate === null) return false;
             return allowedDocIdSet.has(String(candidate));
         };
         const chunkFilter = allowedDocIdSet
-            ? (metadata) => allowDoc(metadata?.parent_id ?? metadata?.doc_id ?? metadata?.id)
+            ? metadata => allowDoc(metadata?.parent_id ?? metadata?.doc_id ?? metadata?.id)
             : null;
         const docFilter = allowedDocIdSet
-            ? (metadata) => allowDoc(metadata?.doc_id ?? metadata?.id)
+            ? metadata => allowDoc(metadata?.doc_id ?? metadata?.id)
             : null;
 
-        // 1. Retrieve relevant chunks or documents using HYBRID SEARCH
         let results;
         let isChunkBased = false;
-        let retrievalMetrics = {};
+        let retrievalMetrics;
 
         if (this.chunkVectorSearch && this.chunkVectorSearch.isBuilt) {
-            // TIER 3: Use chunk-based retrieval with HYBRID SEARCH
-            const chunkRetrievalK = Math.max(numResults, retrievalK || this.retrievalK || numResults * 3);
-
-            // Determine search strategy based on vectorWeight FIRST
-            const vectorWeight = options.vectorWeight !== undefined ? options.vectorWeight : this.vectorWeight;
-            const useBM25 = vectorWeight < 1.0 && this.bm25Search && this.bm25Search.isBuilt;
-            const useVector = vectorWeight > 0.0;
-
-            // Log search mode
-            if (vectorWeight >= 1.0) {
-            } else if (vectorWeight <= 0.0) {
-            } else {
-            }
-
-            // Vector search for chunks (only if weight > 0)
-            let vectorChunkResults = [];
-            if (useVector) {
-                vectorChunkResults = this.chunkVectorSearch.search(questionEmbedding, chunkRetrievalK, {
+            const chunkRetrievalK = Math.max(numResults, retrievalK || numResults * 3);
+            const useBM25 = vectorWeight < 1 && this.bm25Search?.isBuilt;
+            const useVector = vectorWeight > 0;
+            let vectorChunkResults = useVector
+                ? this.chunkVectorSearch.search(questionEmbedding, chunkRetrievalK, {
                     minScore: similarityThreshold,
                     includeMetadata: true,
                     filter: chunkFilter
-                });
-                if (vectorChunkResults.length > 0) {
-                }
-            } else {
-            }
+                })
+                : [];
+            const keywordQuery = rankingQuery;
+            const bm25ChunkResults = useBM25
+                ? this.bm25Search.search(keywordQuery, chunkRetrievalK, { filter: chunkFilter })
+                : [];
 
-            // BM25 search for chunks (if weight < 100% and index available)
-            let bm25ChunkResults = [];
-            if (useBM25) {
-                bm25ChunkResults = this.bm25Search.search(question, chunkRetrievalK);
-                if (allowedDocIdSet) {
-                    bm25ChunkResults = bm25ChunkResults.filter(result =>
-                        allowDoc(result.parent_id ?? result.metadata?.parent_id ?? result.metadata?.doc_id)
-                    );
-                }
-                if (bm25ChunkResults.length > 0) {
-                }
-            } else if (useVector) {
-            } else if (!this.bm25Search || !this.bm25Search.isBuilt) {
-            }
-
-            // Fuse results using Reciprocal Rank Fusion (RRF) or use single-source results
             let fusedChunks;
-            if (vectorWeight >= 1.0) {
-                // 100% vector - use vector results directly
-                fusedChunks = vectorChunkResults;
-            } else if (vectorWeight <= 0.0 && bm25ChunkResults.length > 0) {
-                // 100% BM25 - use BM25 results directly
-                fusedChunks = bm25ChunkResults;
-            } else if (bm25ChunkResults.length > 0) {
-                // Hybrid - fuse with RRF
+            if (vectorWeight >= 1) fusedChunks = vectorChunkResults;
+            else if (vectorWeight <= 0 && bm25ChunkResults.length) fusedChunks = bm25ChunkResults;
+            else if (bm25ChunkResults.length) {
                 fusedChunks = this._fuseResults(vectorChunkResults, bm25ChunkResults, {
                     k: 60,
-                    vectorWeight: vectorWeight,
+                    vectorWeight,
                     topK: chunkRetrievalK
                 });
-            } else {
-                // Fallback to vector results
-                fusedChunks = vectorChunkResults;
-            }
+            } else fusedChunks = vectorChunkResults;
 
-            // Pre-limit total chunks before grouping to prevent excessive processing
             const maxTotalChunks = numResults * this.maxChunksPerParent * 2;
-            if (fusedChunks.length > maxTotalChunks) {
-                fusedChunks = fusedChunks.slice(0, maxTotalChunks);
-            }
+            fusedChunks = fusedChunks.slice(0, maxTotalChunks);
+            const parentCandidateCount = Math.max(numResults, Math.min(chunkRetrievalK, numResults * 4));
+            const parentGroups = this._groupChunksByParent(fusedChunks, parentCandidateCount, this.maxChunksPerParent);
 
-            // Group chunks by parent document
-            const parentGroups = this._groupChunksByParent(fusedChunks, numResults, this.maxChunksPerParent);
             if (allowedDocIdSet && parentGroups.length === 0) {
-                console.warn('    No scoped chunks matched; falling back to scoped parent document search');
-                results = this.vectorSearch.search(questionEmbedding, numResults, {
+                results = this.vectorSearch.search(questionEmbedding, parentCandidateCount, {
                     minScore: similarityThreshold,
                     includeMetadata: true,
                     filter: docFilter
-                }).map(result => ({
-                    ...result,
-                    text: result.text || result.metadata?.text || ''
-                }));
-                isChunkBased = false;
-
-                retrievalMetrics.parent_count = results.length;
-                retrievalMetrics.scope_size = allowedDocIdSet.size;
-                retrievalMetrics.fallback = 'parent_scope';
+                }).map(result => ({ ...result, text: result.text || result.metadata?.text || '' }));
             } else {
                 results = parentGroups;
                 isChunkBased = true;
             }
 
-            // Store retrieval metrics
             retrievalMetrics = {
                 vector_count: vectorChunkResults.length,
                 bm25_count: bm25ChunkResults.length,
                 fused_count: fusedChunks.length,
-                parent_count: parentGroups.length,
-                fusion_method: vectorWeight >= 1.0 ? 'vector-only' :
-                               vectorWeight <= 0.0 ? 'bm25-only' :
-                               bm25ChunkResults.length > 0 ? 'RRF' : 'vector-only',
-                scope_size: allowedDocIdSet ? allowedDocIdSet.size : null,
+                parent_count: results.length,
+                fusion_method: vectorWeight >= 1 ? 'vector-only' :
+                    vectorWeight <= 0 ? 'bm25-only' :
+                    bm25ChunkResults.length ? 'RRF' : 'vector-only',
+                scope_size: allowedDocIdSet?.size ?? null,
                 requested_k: chunkRetrievalK
             };
         } else {
-            // Fallback: Use parent document search (original behavior)
-            results = this.vectorSearch.search(questionEmbedding, numResults, {
+            const parentCandidateCount = Math.max(numResults, Math.min(retrievalK || numResults * 4, numResults * 4));
+            results = this.vectorSearch.search(questionEmbedding, parentCandidateCount, {
                 minScore: similarityThreshold,
                 includeMetadata: true,
                 filter: docFilter
-            });
-            // Ensure text is present on all results
-            results = results.map(result => ({
-                ...result,
-                text: result.text || result.metadata?.text || ''
-            }));
-            isChunkBased = false;
-
+            }).map(result => ({ ...result, text: result.text || result.metadata?.text || '' }));
             retrievalMetrics = {
                 vector_count: results.length,
                 bm25_count: 0,
                 fused_count: results.length,
                 parent_count: results.length,
                 fusion_method: 'vector-only',
-                scope_size: allowedDocIdSet ? allowedDocIdSet.size : null,
-                requested_k: retrievalK || this.retrievalK || numResults * 3
+                scope_size: allowedDocIdSet?.size ?? null,
+                requested_k: retrievalK
             };
         }
 
-        // 2. Build context from retrieved results
-        if (includeMetadata) {
+        if (rerankerEnabled && this.reranker && results.length) {
+            options.onStatus?.('reranking');
+            const neural = await this.reranker.rerank(rankingQuery, results, {
+                signal: options.signal,
+                onProgress: progress => {
+                    options.onRerankerProgress?.(progress);
+                    options.onStatus?.('reranking', progress);
+                }
+            });
+            results = neural.results;
+            Object.assign(retrievalMetrics, neural.diagnostics);
         } else {
+            Object.assign(retrievalMetrics, {
+                reranker_applied: false,
+                reranker_model: null,
+                reranker_candidates: 0,
+                reranker_latency_ms: 0,
+                reranker_fallback_reason: rerankerEnabled ? 'unavailable' : null
+            });
         }
+
+        const beforeQualitySelection = results.length;
+        results = rerankAndDiversify(results, rankingQuery, { maxResults: numResults });
+        retrievalMetrics.candidate_parent_count = beforeQualitySelection;
+        retrievalMetrics.selected_count = results.length;
+        retrievalMetrics.dropped_count = Math.max(0, beforeQualitySelection - results.length);
+        retrievalMetrics.post_fusion = retrievalMetrics.reranker_applied
+            ? 'neural_rrf_coverage_mmr_v1'
+            : 'coverage_mmr_v1';
+
         const contextResult = isChunkBased
-            ? this._buildChunkedContext(results, includeMetadata, options.metadataFields)
-            : this._buildContext(results, includeMetadata, options.metadataFields);
-
-        const { context, contextLimited } = contextResult;
-
-        // 3. Create RAG prompt
-        const prompt = this._buildRAGPrompt(question, context);
-
-        // 4. Generate answer using LLM (streaming internally for abort support)
-        const startTime = Date.now();
-
-        try {
-            // Use streaming API internally to support abort
-            const completion = await this.engine.chat.completions.create({
-                messages: [
-                    {
-                        role: "system",
-                        content: this.systemPrompt
-                    },
-                    {
-                        role: "user",
-                        content: prompt
-                    }
-                ],
-                temperature: temperature || this.temperature,
-                max_tokens: maxTokens || this.maxTokens,
-                top_p: this.topP,
-                repetition_penalty: this.repeatPenalty,
-                stream: true  // Enable streaming for abort support
-            });
-
-            let answer = '';
-            let wasStopped = false;
-            const thinkFilter = this._createThinkFilter();
-
-            for await (const chunk of completion) {
-                // Check abort flag between chunks
-                if (this.shouldAbort) {
-                    wasStopped = true;
-                    break;
-                }
-                const content = chunk.choices[0]?.delta?.content || '';
-                answer += thinkFilter.push(content);
+            ? this._buildChunkedContext(results, includeMetadata, metadataFields)
+            : this._buildContext(results, includeMetadata, metadataFields);
+        return {
+            question,
+            sources: results,
+            context: contextResult.context,
+            contextPrompt: this._buildRAGPrompt(question, contextResult.context),
+            metadata: {
+                numSources: results.length,
+                searchType: 'hybrid',
+                retrieval: retrievalMetrics,
+                scope: allowedDocIdSet ? { type: 'doc_filter', size: allowedDocIdSet.size } : { type: 'all' },
+                contextLimited: contextResult.contextLimited,
+                tokensUsed: contextResult.tokensUsed,
+                maxContextTokens: contextResult.maxTokens,
+                generationProvider: 'none'
             }
-
-            // Flush any remaining buffered content
-            answer += thinkFilter.flush();
-
-            // If we aborted, mark engine for reinitialization
-            if (wasStopped) {
-                this.needsReinit = true;
-            }
-
-            answer = this._stripThinkingTokens(answer);
-
-            const generationTime = (Date.now() - startTime) / 1000;
-
-            if (wasStopped) {
-            } else {
-            }
-
-            const result = {
-                answer: answer,
-                sources: results,
-                metadata: {
-                    numSources: results.length,
-                    searchType: 'hybrid',
-                    generationTime: generationTime,
-                    model: this.modelId,
-                    temperature: temperature,
-                    retrieval: retrievalMetrics,  // Expose hybrid search details
-                    scope: scopeMetadata,
-                    retrieval_time_ms: generationTime * 1000,
-                    wasStopped: wasStopped,
-                    contextLimited: contextLimited
-                }
-            };
-
-            // Store in conversation history for export
-            this.conversationHistory.push({
-                timestamp: new Date().toISOString(),
-                query: question,
-                answer: answer,
-                sources: results.map(r => ({
-                    id: r.id || r.index,
-                    text: r.text || '',
-                    score: r.score || 0,
-                    metadata: r.metadata || {}
-                })),
-                metadata: result.metadata
-            });
-
-            // Schedule idle auto-suspend (5 min) to free GPU/RAM if user goes idle
-            this._scheduleIdleSuspend();
-
-            return result;
-        } catch (error) {
-            console.error('❌ Answer generation failed:', error);
-            const msg = error?.message || '';
-            // ModelNotLoadedError: engine exists but model wasn't loaded — force full reinit next call
-            if (msg.includes('ModelNotLoaded') || msg.includes('not loaded before')) {
-                this.isInitialized = false;
-                this._idbRetried = false;
-                this.needsReinit = true;
-            }
-            throw new Error(`Failed to generate answer: ${msg}`);
-        }
+        };
     }
 
+    async _generateFromRetrievedContext(question, questionEmbedding, options = {}) {
+        const freshConfig = this.loadSavedConfig();
+        if (freshConfig.temperature !== undefined) this.temperature = freshConfig.temperature;
+        if (freshConfig.max_tokens) this.maxTokens = freshConfig.max_tokens;
+        if (freshConfig.top_p !== undefined) this.topP = freshConfig.top_p;
+        if (freshConfig.repeat_penalty !== undefined) this.repeatPenalty = freshConfig.repeat_penalty;
+
+        const retrievalStarted = Date.now();
+        const retrieval = await this.retrieveContext(question, questionEmbedding, {
+            ...options,
+            signal: options.signal || options.operationToken?.abortController?.signal || null
+        });
+        const retrievalTimeMs = Date.now() - retrievalStarted;
+        this.reranker?.releaseForGeneration?.();
+        if (!retrieval.sources.length) {
+            return {
+                answer: 'No relevant documents were found for this question.',
+                sources: [],
+                metadata: {
+                    ...retrieval.metadata,
+                    generationProvider: 'local',
+                    model: this.modelId,
+                    retrieval_time_ms: retrievalTimeMs,
+                    generationTime: 0,
+                    wasStopped: false
+                }
+            };
+        }
+
+        const rawTemperature = options.temperature ?? this.temperature;
+        const temperature = Math.max(this.modelConstraints.temp[0], Math.min(this.modelConstraints.temp[1], rawTemperature));
+        let maxTokens = Math.max(
+            this.modelConstraints.maxTokens[0],
+            Math.min(this.modelConstraints.maxTokens[1], options.maxTokens ?? this.maxTokens)
+        );
+        if (this.modelConstraints?.hasThinkMode) {
+            maxTokens = Math.min(maxTokens * 3, this.modelConstraints.maxTokens[1]);
+        }
+
+        const generationStarted = Date.now();
+        const completion = await this.engine.chat.completions.create({
+            messages: this._chatMessages([
+                { role: 'system', content: this.systemPrompt },
+                { role: 'user', content: retrieval.contextPrompt }
+            ]),
+            temperature,
+            max_tokens: maxTokens,
+            top_p: this.topP,
+            repetition_penalty: this.repeatPenalty,
+            stream: true
+        });
+
+        let answer = '';
+        let wasStopped = false;
+        const thinkFilter = this._createThinkFilter();
+        for await (const chunk of completion) {
+            if (this.shouldAbort) {
+                wasStopped = true;
+                this.needsReinit = true;
+                break;
+            }
+            const visible = thinkFilter.push(chunk.choices[0]?.delta?.content || '');
+            answer += visible;
+            if (visible && typeof options.onChunk === 'function') options.onChunk(visible, answer);
+        }
+        answer += thinkFilter.flush();
+        answer = this._stripThinkingTokens(answer);
+
+        const metadata = {
+            ...retrieval.metadata,
+            generationProvider: 'local',
+            model: this.modelId,
+            temperature,
+            retrieval_time_ms: retrievalTimeMs,
+            generationTime: (Date.now() - generationStarted) / 1000,
+            wasStopped
+        };
+        const result = { answer, sources: retrieval.sources, metadata };
+        this.conversationHistory.push({
+            timestamp: new Date().toISOString(),
+            query: question,
+            answer,
+            sources: retrieval.sources,
+            metadata
+        });
+        this._scheduleIdleSuspend();
+        return result;
+    }
+
+    /**
+     * Perform RAG query
+     * @param {string} question - User question
+     * @param {number[]} questionEmbedding - Embedding of the question
+     * @param {Object} options - Query options
+     * @returns {Promise<Object>} RAG response with answer and sources
+     */
+    async query(question, questionEmbedding, options = {}) {
+        return this.withOperation(options.owner || 'rag', options, async operation => {
+            await this.ensureEngineReady(options.onStatus, operation);
+            this._emitOperationState(operation, 'generating');
+            return this._generateFromRetrievedContext(question, questionEmbedding, { ...options, operationToken: operation });
+        });
+    }
     /**
      * Stream RAG response (for real-time display)
      * @param {string} question
@@ -875,137 +1098,12 @@ ${question}`;
      * @param {Object} options
      */
     async queryStream(question, questionEmbedding, onChunk, options = {}) {
-        // Ensure engine is ready (reinitialize if needed after abort)
-        await this.ensureEngineReady();
-
-        // Reload config before streaming query
-        const freshConfig = this.loadSavedConfig();
-        if (freshConfig.temperature !== undefined) this.temperature = freshConfig.temperature;
-        if (freshConfig.max_tokens) this.maxTokens = freshConfig.max_tokens;
-        if (freshConfig.top_p !== undefined) this.topP = freshConfig.top_p;
-        if (freshConfig.repeat_penalty !== undefined) this.repeatPenalty = freshConfig.repeat_penalty;
-        if (freshConfig.num_results) this.numResults = freshConfig.num_results;
-        if (freshConfig.similarity_threshold !== undefined) this.similarityThreshold = freshConfig.similarity_threshold;
-        if (freshConfig.retrieval_k !== undefined) this.retrievalK = freshConfig.retrieval_k;
-        if (freshConfig.system_prompt) this.systemPrompt = freshConfig.system_prompt;
-        if (freshConfig.user_template) this.userTemplate = freshConfig.user_template;
-
-        const {
-            numResults = this.numResults,
-            temperature = this.temperature,
-            maxTokens: rawMaxTokens = this.maxTokens,
-            includeMetadata = true,
-            metadataFields = undefined,
-            similarityThreshold = this.similarityThreshold,
-            allowedDocIds = null
-        } = options;
-
-        // Think-mode models need extra token budget for reasoning + answer
-        let maxTokens = rawMaxTokens;
-        if (this.modelConstraints?.hasThinkMode) {
-            const boosted = maxTokens * 3;
-            maxTokens = Math.min(boosted, this.modelConstraints.maxTokens[1]);
-        }
-
-        const requestedSearchType = options.searchType ? String(options.searchType).toLowerCase() : 'semantic';
-        if (requestedSearchType !== 'semantic' && requestedSearchType) {
-            console.warn(`Keyword retrieval mode is no longer supported for RAG streaming. Using semantic vectors instead (requested: ${requestedSearchType}).`);
-        }
-        const allowedDocIdSet = this._normalizeDocScope(allowedDocIds);
-        if (allowedDocIdSet) {
-        }
-        const scopeMetadata = allowedDocIdSet ? { type: 'doc_filter', size: allowedDocIdSet.size } : null;
-        const allowDoc = (candidate) => {
-            if (!allowedDocIdSet) return true;
-            if (candidate === undefined || candidate === null) return false;
-            return allowedDocIdSet.has(String(candidate));
-        };
-        const docFilter = allowedDocIdSet
-            ? (metadata) => allowDoc(metadata?.doc_id ?? metadata?.id)
-            : null;
-
-        const normalizedSearchType = 'semantic';
-
-        // Retrieve documents
-        let results = this.vectorSearch.search(questionEmbedding, numResults, {
-            minScore: similarityThreshold,
-            includeMetadata: true,
-            filter: docFilter
+        return this.withOperation(options.owner || 'rag', options, async operation => {
+            await this.ensureEngineReady(options.onStatus, operation);
+            this._emitOperationState(operation, 'generating');
+            return this._generateFromRetrievedContext(question, questionEmbedding, { ...options, onChunk, operationToken: operation });
         });
-
-        results = results.map(result => ({
-            ...result,
-            text: result.text || result.metadata?.text || ''
-        }));
-
-        const contextResult = this._buildContext(results, includeMetadata, metadataFields);
-        const { context, contextLimited } = contextResult;
-        const prompt = this._buildRAGPrompt(question, context);
-
-        // Stream completion
-        const completion = await this.engine.chat.completions.create({
-            messages: [
-                {
-                    role: "system",
-                    content: this.systemPrompt
-                },
-                {
-                    role: "user",
-                    content: prompt
-                }
-            ],
-            temperature: temperature || this.temperature,
-            max_tokens: maxTokens || this.maxTokens,
-            top_p: this.topP,
-            repetition_penalty: this.repeatPenalty,
-            stream: true
-        });
-
-        let fullAnswer = '';
-        let visibleAnswer = '';
-        let wasStopped = false;
-        const thinkFilter = this._createThinkFilter();
-
-        for await (const chunk of completion) {
-            // Check abort flag between chunks
-            if (this.shouldAbort) {
-                wasStopped = true;
-                break;
-            }
-
-            const content = chunk.choices[0]?.delta?.content || '';
-            fullAnswer += content;
-            const visible = thinkFilter.push(content);
-            visibleAnswer += visible;
-            if (onChunk && visible) {
-                onChunk(visible, visibleAnswer);
-            }
-        }
-
-        // Flush any remaining buffered content
-        const flushed = thinkFilter.flush();
-        visibleAnswer += flushed;
-
-        // Final cleanup pass for any remaining think tags
-        visibleAnswer = this._stripThinkingTokens(visibleAnswer);
-
-        // Schedule idle auto-suspend after streaming completes
-        this._scheduleIdleSuspend();
-
-        return {
-            answer: visibleAnswer,
-            sources: results,
-            metadata: {
-                numSources: results.length,
-                searchType: normalizedSearchType,
-                model: this.modelId,
-                scope: scopeMetadata,
-                wasStopped: wasStopped,
-                contextLimited: contextLimited
-            }
-        };
     }
-
     /**
      * Reciprocal Rank Fusion (RRF) for hybrid search
      * Combines results from multiple retrievers with rank-based scoring
@@ -1105,8 +1203,6 @@ ${question}`;
             cleaned = text.replace(/<\/?think>/g, '').trim();
         }
 
-        if (cleaned.length !== text.length) {
-        }
         return cleaned;
     }
 
@@ -1214,7 +1310,7 @@ ${question}`;
             const result = results[i];
             const text = result.text || result.metadata?.text || '';
 
-            let contextItem = `[${i + 1}] ${text}`;
+            let contextItem = `[Doc ${i + 1}] ${text}`;
 
             if (includeMetadata && result.metadata) {
                 // Filter metadata fields if specific fields are requested
@@ -1403,7 +1499,7 @@ ${question}`;
 
         for (let i = 0; i < parentGroups.length; i++) {
             const group = parentGroups[i];
-            let parentContext = `\n[Document ${i + 1}]`;
+            let parentContext = `\n[Doc ${i + 1}]`;
 
             // Add document-level metadata once (from first chunk)
             if (includeMetadata && group.chunks[0].metadata) {
@@ -1530,6 +1626,10 @@ ${question}`;
         this.bm25Search = bm25Search;
     }
 
+    setReranker(reranker) {
+        this.reranker = reranker;
+    }
+
     /**
      * Export conversation history
      * @param {string} format - 'json' or 'csv'
@@ -1584,112 +1684,173 @@ ${question}`;
      * summarization and other prompt-only tasks.
      */
     async generateRaw(prompt, options = {}) {
-        await this.ensureEngineReady();
-        const {
-            temperature = Math.min(0.7, this.modelConstraints.temp[1]),
-            maxTokens: rawMax = Math.min(256, this.modelConstraints.maxTokens[1]),
-            topP = 0.9,
-            systemPrompt = null
-        } = options;
+        return this.withOperation(options.owner || 'cluster-label', options, async operation => {
+            await this.ensureEngineReady(options.onStatus, operation);
+            const {
+                temperature = Math.min(0.7, this.modelConstraints.temp[1]),
+                maxTokens: rawMax = Math.min(256, this.modelConstraints.maxTokens[1]),
+                topP = 0.9,
+                systemPrompt = null
+            } = options;
 
-        const maxTokens = Math.max(
-            this.modelConstraints.maxTokens[0],
-            Math.min(this.modelConstraints.maxTokens[1], rawMax)
-        );
+            const maxTokens = Math.max(
+                this.modelConstraints.maxTokens[0],
+                Math.min(this.modelConstraints.maxTokens[1], rawMax)
+            );
 
-        const messages = [];
-        if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
-        messages.push({ role: 'user', content: prompt });
+            const messages = [];
+            if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+            messages.push({ role: 'user', content: prompt });
+            this._emitOperationState(operation, 'generating');
 
-        const completion = await this.engine.chat.completions.create({
-            messages,
-            temperature,
-            max_tokens: maxTokens,
-            top_p: topP,
-            stream: true
-        });
+            const completion = await this.engine.chat.completions.create({
+                messages: this._chatMessages(messages),
+                temperature,
+                max_tokens: maxTokens,
+                top_p: topP,
+                stream: true
+            });
 
-        let text = '';
-        const thinkFilter = this._createThinkFilter();
-        for await (const chunk of completion) {
-            if (this.shouldAbort) {
-                this.needsReinit = true;
-                throw new Error('Generation aborted');
+            let text = '';
+            const thinkFilter = this._createThinkFilter();
+            for await (const chunk of completion) {
+                if (this.shouldAbort) {
+                    this.needsReinit = true;
+                    throw new Error('Generation aborted');
+                }
+                const content = chunk.choices[0]?.delta?.content || '';
+                text += thinkFilter.push(content);
             }
-            const content = chunk.choices[0]?.delta?.content || '';
-            text += thinkFilter.push(content);
-        }
-        text += thinkFilter.flush();
-        return this._stripThinkingTokens(text).trim();
+            text += thinkFilter.flush();
+            return this._stripThinkingTokens(text).trim();
+        });
     }
 
     /**
-     * RAG query with per-sentence provenance. Runs the standard `query()` flow,
-     * then splits the generated answer into sentence-level "claims" and links
-     * each one back to the retrieved sources by maximum text overlap. Confidence
-     * is the best per-source overlap score in [0, 1].
-     *
-     * Returns: { answer, claims:[{claim, supporting_doc_indices, confidence}], sources, metadata }
+     * Stream a pre-budgeted chat prompt. Retrieval and memory allocation live
+     * above this layer so one-shot RAG and MCP behavior remain unchanged.
      */
+    async generateFromMessages(messages, options = {}) {
+        return this.withOperation(options.owner || 'chat', options, async operation => {
+            await this.ensureEngineReady(options.onStatus, operation);
+            await this._resetEngineChatBestEffort('chat completion');
+            // Older persisted plans and independent callers may still contain
+            // a later system message. Gemma rejects that shape, so enforce one
+            // leading system message at the WebLLM boundary as defense-in-depth.
+            const orderedMessages = this._chatMessages(messages);
+            if (!orderedMessages.length) throw new Error('No valid chat messages were provided.');
+            const promptCompatibility = this._promptCompatibilityDiagnostic(orderedMessages);
+            if (globalThis.__VECTORIA_DEBUG_AI__ === true) {
+                console.debug('WebLLM prompt role diagnostic:', promptCompatibility);
+            }
+            const freshConfig = this.loadSavedConfig();
+            const rawTemperature = options.temperature ?? freshConfig.temperature ?? this.temperature;
+            const temperature = Math.max(this.modelConstraints.temp[0], Math.min(this.modelConstraints.temp[1], rawTemperature));
+            const requestedMax = options.maxTokens ?? freshConfig.max_tokens ?? this.maxTokens;
+            const maxTokens = Math.max(
+                this.modelConstraints.maxTokens[0],
+                Math.min(this.modelConstraints.maxTokens[1], requestedMax)
+            );
+            const startedAt = Date.now();
+            const topP = options.topP ?? freshConfig.top_p ?? this.topP;
+            const repeatPenalty = options.repeatPenalty ?? freshConfig.repeat_penalty ?? this.repeatPenalty;
+            this._emitOperationState(operation, 'generating');
+            const completion = await this.engine.chat.completions.create({
+                messages: orderedMessages,
+                temperature,
+                max_tokens: maxTokens,
+                top_p: topP,
+                repetition_penalty: repeatPenalty,
+                stream: true,
+                stream_options: { include_usage: true }
+            });
+
+            let answer = '';
+            let wasStopped = false;
+            let finishReason = null;
+            let usage = null;
+            const thinkFilter = this._createThinkFilter();
+            for await (const chunk of completion) {
+                if (chunk?.usage) usage = chunk.usage;
+                const chunkFinishReason = chunk?.choices?.[0]?.finish_reason;
+                if (chunkFinishReason) finishReason = chunkFinishReason;
+                if (this.shouldAbort) {
+                    wasStopped = true;
+                    finishReason = 'abort';
+                    this.needsReinit = true;
+                    break;
+                }
+                const visible = thinkFilter.push(chunk.choices[0]?.delta?.content || '');
+                answer += visible;
+                if (visible) options.onChunk?.(visible, answer);
+            }
+            answer += thinkFilter.flush();
+            answer = this._stripThinkingTokens(answer).trim();
+            if (!wasStopped && !answer) {
+                const error = new Error('WebLLM returned an empty completion.');
+                error.code = 'empty_completion';
+                throw error;
+            }
+            if (finishReason === 'abort') wasStopped = true;
+            const usageExtra = usage?.extra || {};
+            return {
+                answer,
+                wasStopped,
+                finishReason: finishReason || (wasStopped ? 'abort' : 'stop'),
+                metadata: {
+                    model: this.modelId,
+                    temperature,
+                    topP,
+                    repeatPenalty,
+                    maxTokens,
+                    generationTime: (Date.now() - startedAt) / 1000,
+                    wasStopped,
+                    finishReason: finishReason || (wasStopped ? 'abort' : 'stop'),
+                    promptCompatibility,
+                    actualUsage: usage ? {
+                        promptTokens: Number(usage.prompt_tokens) || 0,
+                        completionTokens: Number(usage.completion_tokens) || 0,
+                        totalTokens: Number(usage.total_tokens) || 0,
+                        e2eLatencySeconds: Number(usageExtra.e2e_latency_s) || null,
+                        prefillTokensPerSecond: Number(usageExtra.prefill_tokens_per_s) || null,
+                        decodeTokensPerSecond: Number(usageExtra.decode_tokens_per_s) || null,
+                        timeToFirstTokenSeconds: Number(usageExtra.time_to_first_token_s) || null
+                    } : null
+                }
+            };
+        });
+    }
+
+    /** RAG query with LLM synthesis and current-turn citation-boundary checks. */
     async queryWithCitations(question, questionEmbedding, options = {}) {
         const base = await this.query(question, questionEmbedding, options);
         const answer = base?.answer || base?.text || '';
         const sources = base?.sources || base?.results || [];
-        const confidenceThreshold = options.confidenceThreshold ?? 0.0;
-
-        const sourceTexts = sources.map(s => s?.text || s?.metadata?.text || '');
-        const sourceTokens = sourceTexts.map(t => tokenize(t));
-
-        const sentences = splitSentences(answer);
-        const claims = sentences.map(sentence => {
-            const claimTokens = tokenize(sentence);
-            const supporting = [];
-            for (let i = 0; i < sourceTokens.length; i++) {
-                const overlap = jaccard(claimTokens, sourceTokens[i]);
-                if (overlap > 0) supporting.push({ index: i, overlap });
-            }
-            supporting.sort((a, b) => b.overlap - a.overlap);
-            const top = supporting.slice(0, 3);
-            const confidence = top[0]?.overlap || 0;
-            return {
-                claim: sentence,
-                supporting_doc_indices: top
-                    .filter(t => t.overlap >= confidenceThreshold)
-                    .map(t => sources[t.index]?.index ?? t.index),
-                confidence
-            };
-        }).filter(c => c.confidence >= confidenceThreshold || confidenceThreshold === 0);
+        const checked = sanitizeCitationBounds(answer, sources.length);
+        const claims = checked.answer ? [{
+            claim: checked.answer,
+            supporting_doc_indices: checked.citations.map(number => {
+                const source = sources[number - 1];
+                return source?.index ?? source?.documentIndex ?? number - 1;
+            }),
+            confidence: null,
+            verdict: 'not_evaluated',
+            reasons: ['llm_synthesis_citation_bounds_only'],
+            evidence_excerpts: []
+        }] : [];
 
         return {
-            answer,
+            answer: checked.answer,
             claims,
             sources,
-            metadata: base?.metadata || null
+            metadata: {
+                ...(base?.metadata || {}),
+                groundingState: 'llm_synthesis',
+                validation_method: 'citation_bounds_only',
+                invalidCitationCount: checked.invalidCitations.length,
+                removedClaimCount: 0,
+                fallbackUsed: false
+            }
         };
     }
-}
-
-function splitSentences(text) {
-    if (!text) return [];
-    // Simple splitter: punctuation followed by whitespace+capital, or newlines.
-    const raw = text.split(/(?<=[.!?])\s+(?=[A-ZÆØÅ])|\n+/);
-    return raw.map(s => s.trim()).filter(s => s.length > 0);
-}
-
-function tokenize(text) {
-    if (!text) return new Set();
-    return new Set(
-        text.toLowerCase()
-            .replace(/[^a-z0-9æøåäöü\s]/gi, ' ')
-            .split(/\s+/)
-            .filter(t => t.length > 2)
-    );
-}
-
-function jaccard(a, b) {
-    if (!a.size || !b.size) return 0;
-    let inter = 0;
-    for (const t of a) if (b.has(t)) inter++;
-    const union = a.size + b.size - inter;
-    return union === 0 ? 0 : inter / union;
 }

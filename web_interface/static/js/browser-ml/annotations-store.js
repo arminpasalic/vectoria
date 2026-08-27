@@ -14,14 +14,28 @@ export class AnnotationsStore {
     }
 
     add({ doc_indices, tag, note = '', color = null }) {
-        if (!Array.isArray(doc_indices) || !tag) {
-            throw new Error('annotate_documents requires doc_indices[] and tag');
+        if (!Array.isArray(doc_indices) || doc_indices.length === 0) {
+            throw new Error('annotate_documents requires a non-empty doc_indices[] array');
         }
+        if (typeof tag !== 'string' || !tag.trim()) {
+            throw new Error('annotate_documents requires a non-empty tag');
+        }
+        const documentCount = this.pipeline.currentDataset?.documents?.length;
+        const indices = [...new Set(doc_indices)];
+        for (const idx of indices) {
+            if (!Number.isInteger(idx) || idx < 0) {
+                throw new Error(`Document index must be a non-negative integer: ${idx}`);
+            }
+            if (Number.isInteger(documentCount) && idx >= documentCount) {
+                throw new Error(`Document index ${idx} is outside the active dataset`);
+            }
+        }
+        const normalizedTag = tag.trim();
         const created_at = Date.now();
         const ids = [];
-        for (const idx of doc_indices) {
+        for (const idx of indices) {
             const id = `ann_${created_at}_${Math.random().toString(36).slice(2, 8)}_${idx}`;
-            const entry = { id, doc_index: idx, tag, note, color, created_at };
+            const entry = { id, doc_index: idx, tag: normalizedTag, note, color, created_at };
             this.pipeline.annotations.set(id, entry);
             if (!this._byDoc.has(idx)) this._byDoc.set(idx, new Set());
             this._byDoc.get(idx).add(id);
@@ -50,7 +64,9 @@ export class AnnotationsStore {
         const ann = this.pipeline.annotations.get(id);
         if (!ann) return false;
         this.pipeline.annotations.delete(id);
-        this._byDoc.get(ann.doc_index)?.delete(id);
+        const documentAnnotations = this._byDoc.get(ann.doc_index);
+        documentAnnotations?.delete(id);
+        if (documentAnnotations?.size === 0) this._byDoc.delete(ann.doc_index);
         return true;
     }
 

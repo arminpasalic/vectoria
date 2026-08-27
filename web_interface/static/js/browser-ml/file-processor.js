@@ -241,9 +241,6 @@ export class BrowserFileProcessor {
             });
         }
 
-        if (excludedColumns.size > 0) {
-        }
-
         return { documents, emptyRowCount };
     }
 

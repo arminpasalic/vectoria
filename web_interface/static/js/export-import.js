@@ -22,8 +22,12 @@
  * Download content as a file
  */
 function downloadFile(content, filename) {
+    const extension = String(filename || '').split('.').pop()?.toLowerCase();
+    const mimeType = extension === 'md' ? 'text/markdown;charset=utf-8'
+        : extension === 'csv' ? 'text/csv;charset=utf-8'
+        : 'application/json;charset=utf-8';
     const blob = typeof content === 'string'
-        ? new Blob([content], {type: 'application/json;charset=utf-8'})
+        ? new Blob([content], { type: mimeType })
         : content;
 
     const url = URL.createObjectURL(blob);
@@ -428,10 +432,13 @@ async function importDataset(file) {
             throw new Error('Invalid dataset: missing documents array');
         }
 
+        window.clearActiveClusterLabels?.();
+        pipeline.clearMcpMetadataFilters?.();
+
         // Reconstruct dataset in pipeline format
         showToast('Rebuilding embeddings and indexes...', 'info');
 
-        const reconstructedData = await reconstructDataset(data, pipeline);
+        const reconstructedData = await reconstructDataset(data, pipeline, { fileName: file.name });
 
         // Restore custom cluster names if present in export
         if (data.custom_cluster_names && typeof window.setClusterNames === 'function') {
@@ -490,7 +497,7 @@ async function importDataset(file) {
 /**
  * Reconstruct dataset from imported data
  */
-async function reconstructDataset(data, pipeline) {
+async function reconstructDataset(data, pipeline, { fileName = 'imported.vectoria.json' } = {}) {
     // Rebuild documents array
     const documents = data.documents.map((doc, idx) => ({
         id: doc.id || idx,
@@ -526,21 +533,76 @@ async function reconstructDataset(data, pipeline) {
         cluster_probability: 1.0
     }));
 
+    const chunkToParentMap = data.embeddings?.chunk_map || Object.fromEntries(
+        chunks.map(chunk => [chunk.chunkId, String(chunk.docId)])
+    );
+    const normalizedEmbeddings = {
+        parent: parentEmbeddings,
+        chunks,
+        chunkToParentMap,
+        model: data.metadata?.embedding_model || 'unknown',
+        dimension: data.metadata?.embedding_dimension || parentEmbeddings[0]?.length || chunks[0]?.embedding?.length || 384,
+        schema: 'three-tier-v1',
+        modes: { parent: 'query', chunks: 'passage' }
+    };
+
+    // Rebuild chunk retrieval indexes. Imported datasets must be immediately
+    // usable by local chat once the models are available, not visualization-only.
+    pipeline.chunkToParentMap = chunkToParentMap;
+    if (chunks.length > 0 && pipeline.vectorSearch?.constructor) {
+        const ChunkVectorSearch = pipeline.vectorSearch.constructor;
+        pipeline.chunkVectorSearch = new ChunkVectorSearch(normalizedEmbeddings.dimension);
+        await pipeline.chunkVectorSearch.buildIndex(
+            chunks.map(chunk => chunk.embedding),
+            chunks.map(chunk => chunk.chunkId),
+            chunks.map(chunk => ({
+                text: chunk.text,
+                doc_id: chunk.chunkId,
+                parent_id: chunk.docId,
+                chunk_index: chunk.chunkIndex,
+                ...(chunk.metadata || {})
+            }))
+        );
+
+        const ChunkBM25Search = pipeline.bm25Search?.constructor;
+        if (ChunkBM25Search) {
+            pipeline.chunkBM25Search = new ChunkBM25Search();
+            const chunkDocuments = chunks.map(chunk => ({
+                id: chunk.chunkId,
+                text: chunk.text,
+                metadata: {
+                    ...(chunk.metadata || {}),
+                    parent_id: chunk.docId,
+                    chunk_index: chunk.chunkIndex
+                }
+            }));
+            pipeline.chunkBM25Search.buildIndex(chunkDocuments, chunkDocuments.map(chunk => chunk.id));
+        }
+    } else {
+        pipeline.chunkVectorSearch = null;
+        pipeline.chunkBM25Search = null;
+    }
+    // Every import is a new local dataset. This keeps chat provenance separate
+    // when the same file is imported more than once while still giving the
+    // active dataset a stable ID for its lifetime and IndexedDB record.
+    const randomPart = globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
+    const datasetId = `dataset_${Date.now()}_${randomPart}`;
+
     // Store in pipeline
     pipeline.currentDataset = {
+        id: datasetId,
         documents: documentsWithViz,
-        embeddings: {
-            parent: parentEmbeddings,
-            chunks: chunks,
-            dimension: data.metadata?.embedding_dimension || 384,
-            chunkToParentMap: data.embeddings?.chunk_map || {}
-        },
+        embeddings: normalizedEmbeddings,
         projection: projection.map(p => new Float32Array(p)),
         clusters: new Int32Array(clusters),
         metadataSchema: data.metadata_schema || {},
         embeddingModel: data.metadata?.embedding_model || 'unknown',
-        textColumn: data.metadata?.text_column || null
+        textColumn: data.metadata?.text_column || null,
+        fileName,
+        fileType: 'vectoria-json',
+        numDocuments: documentsWithViz.length
     };
+    pipeline.currentDatasetId = datasetId;
 
     // Rebuild search indexes
     if (pipeline.vectorSearch && parentEmbeddings.length > 0) {
@@ -549,16 +611,36 @@ async function reconstructDataset(data, pipeline) {
         await pipeline.vectorSearch.buildIndex(parentEmbeddings, docIds, documentsWithViz);
     }
 
-    if (pipeline.chunkSearch && chunks.length > 0) {
-        // Build chunk IDs and embeddings for chunk search
-        const chunkIds = chunks.map(c => String(c.chunkId));
-        const chunkEmbeddings = chunks.map(c => c.embedding);
-        await pipeline.chunkSearch.buildIndex(chunkEmbeddings, chunkIds, chunks);
-    }
-
     if (pipeline.bm25Search) {
         const docIds = documentsWithViz.map(d => String(d.id));
         pipeline.bm25Search.buildIndex(documentsWithViz, docIds);
+    }
+
+    if (pipeline.rag) {
+        pipeline.rag.setChunkVectorSearch(pipeline.chunkVectorSearch);
+        pipeline.rag.setBM25Search(pipeline.chunkBM25Search || pipeline.bm25Search);
+    }
+
+    await pipeline.storage.saveDataset(datasetId, {
+        embeddings: normalizedEmbeddings,
+        vectorIndex: pipeline.vectorSearch?.serialize?.() || null,
+        documents: documentsWithViz,
+        projection: pipeline.currentDataset.projection,
+        clusteringProjection: null,
+        clusters: pipeline.currentDataset.clusters,
+        fileName,
+        fileType: 'vectoria-json',
+        textColumn: pipeline.currentDataset.textColumn,
+        metadataSchema: pipeline.currentDataset.metadataSchema,
+        emptyRowCount: 0,
+        duplicateCount: 0,
+        clusterKeywords: null
+    });
+
+    if (typeof document !== 'undefined') {
+        document.dispatchEvent(new CustomEvent('vectoria:dataset-changed', {
+            detail: { datasetId, reason: 'imported' }
+        }));
     }
 
     return {
@@ -575,7 +657,7 @@ async function reconstructDataset(data, pipeline) {
 /**
  * Export RAG conversation history (separate from dataset exports)
  */
-function exportRAGConversation(conversationHistory, format = 'json') {
+async function exportRAGConversation(conversationHistory, format = 'json') {
     if (!conversationHistory || conversationHistory.length === 0) {
         showToast('No conversation history to export', 'warning');
         return;
@@ -584,6 +666,8 @@ function exportRAGConversation(conversationHistory, format = 'json') {
     try {
         if (format === 'json') {
             const exportData = {
+                format: 'vectoria-conversation',
+                format_version: 3,
                 conversation: conversationHistory,
                 exported_at: new Date().toISOString(),
                 total_queries: conversationHistory.length
@@ -593,20 +677,19 @@ function exportRAGConversation(conversationHistory, format = 'json') {
             const filename = generateFilename('vectoria-conversation', 'json');
             downloadFile(json, filename);
             showToast(`Exported ${conversationHistory.length} Q&A pairs`, 'success');
+        } else if (format === 'markdown' || format === 'md') {
+            const { buildChatMarkdown } = await import('./browser-ml/chat-export.js');
+            const markdown = buildChatMarkdown(conversationHistory);
+            const filename = generateFilename('vectoria-conversation', 'md');
+            downloadFile(markdown, filename);
+            showToast(`Exported ${conversationHistory.length} Q&A pairs as Markdown`, 'success');
         } else if (format === 'csv') {
             if (typeof Papa === 'undefined') {
                 throw new Error('Papa Parse library not loaded');
             }
 
-            const csvData = conversationHistory.map(entry => ({
-                timestamp: entry.timestamp,
-                query: entry.query,
-                answer: entry.answer,
-                num_sources: entry.sources?.length || 0,
-                source_ids: entry.sources?.map(s => s.id || s.index).join('|') || '',
-                model: entry.metadata?.model || '',
-                temperature: entry.metadata?.temperature || ''
-            }));
+            const { buildChatCsvRows } = await import('./browser-ml/chat-export.js');
+            const csvData = buildChatCsvRows(conversationHistory);
 
             const csv = Papa.unparse(csvData, { quotes: true, header: true });
             const filename = generateFilename('vectoria-conversation', 'csv');
@@ -632,4 +715,3 @@ window.exportRAGConversation = exportRAGConversation;
 // Backwards compatibility aliases
 window.exportProcessedDataset = exportFullDataset;
 window.importProcessedDataset = importDataset;
-

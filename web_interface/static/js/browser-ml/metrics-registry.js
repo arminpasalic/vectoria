@@ -117,6 +117,9 @@ export class MetricsRegistry {
 
     _parseFactor() {
         this._skipWs();
+        if (this._pos >= this._src.length) {
+            throw new Error(`Unexpected end of formula at position ${this._pos}`);
+        }
         const c = this._src[this._pos];
         if (c === '(') {
             this._pos++;
@@ -132,23 +135,17 @@ export class MetricsRegistry {
         }
         // Number
         if (/[0-9.]/.test(c)) {
-            let start = this._pos;
-            while (this._pos < this._src.length && /[0-9.eE+\-]/.test(this._src[this._pos])) {
-                // be careful with +/- after e
-                const ch = this._src[this._pos];
-                if ((ch === '+' || ch === '-') && this._pos > start) {
-                    const prev = this._src[this._pos - 1];
-                    if (prev !== 'e' && prev !== 'E') break;
-                }
-                this._pos++;
-            }
-            const num = parseFloat(this._src.slice(start, this._pos));
-            if (Number.isNaN(num)) throw new Error(`Invalid number at position ${start}`);
+            const start = this._pos;
+            const match = this._src.slice(start).match(/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+\-]?\d+)?/);
+            if (!match) throw new Error(`Invalid number at position ${start}`);
+            this._pos += match[0].length;
+            const num = Number(match[0]);
+            if (!Number.isFinite(num)) throw new Error(`Invalid number at position ${start}`);
             return { type: 'num', value: num };
         }
         // Identifier
         if (/[A-Za-z_]/.test(c)) {
-            let start = this._pos;
+            const start = this._pos;
             while (this._pos < this._src.length && /[A-Za-z0-9_]/.test(this._src[this._pos])) this._pos++;
             const name = this._src.slice(start, this._pos);
             return { type: 'ident', name };

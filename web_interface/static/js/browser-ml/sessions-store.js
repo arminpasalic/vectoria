@@ -18,11 +18,11 @@ export class SessionsStore {
     async save(name, findings = '', download = true) {
         const ds = this.pipeline.currentDataset;
         const dataset_id = ds?.id || null;
-        const dataset_hash = ds ? await hashCanonical(ds.documents?.map(d => d.id) ?? []) : null;
+        const dataset_hash = ds
+            ? await hashCanonical(ds.documents?.map(d => [d.id, d.text]) ?? [])
+            : null;
 
-        const filters = (typeof window !== 'undefined' && window.currentMetadataFilters)
-            ? window.currentMetadataFilters
-            : {};
+        const filters = this.pipeline.mcpMetadataFilters || {};
 
         const customClusterLabels = [...(this.pipeline.customClusterLabels?.entries() ?? [])]
             .map(([cluster_id, v]) => ({ cluster_id, ...v }));
@@ -75,12 +75,18 @@ export class SessionsStore {
         if (typeof idOrPayload === 'string') {
             record = this.pipeline.analysisSessions.find(s => s.id === idOrPayload);
             if (!record) throw new Error(`Session not found: ${idOrPayload}`);
+            if (!record.payload || typeof record.payload !== 'object') {
+                throw new Error(`Session ${idOrPayload} does not contain a restorable payload; import the downloaded session JSON instead.`);
+            }
         } else if (idOrPayload && typeof idOrPayload === 'object') {
             // Accept either wrapped {version, payload, sha256} or raw payload
             const wrapped = idOrPayload.payload && idOrPayload.sha256
                 ? idOrPayload
                 : { payload: idOrPayload, sha256: null };
             const payload = wrapped.payload;
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+                throw new Error('Analysis session payload must be an object');
+            }
             const computed = await hashCanonical(payload);
             if (wrapped.sha256 && wrapped.sha256 !== computed) {
                 throw new Error(`Session signature mismatch (tampered or corrupted). expected=${wrapped.sha256} got=${computed}`);
@@ -99,6 +105,20 @@ export class SessionsStore {
         }
 
         const p = record.payload;
+        const currentDataset = this.pipeline.currentDataset;
+        if (p.dataset_hash || p.dataset_id) {
+            if (!currentDataset) throw new Error('Load the matching dataset before restoring this analysis session.');
+            const currentHash = await hashCanonical(
+                currentDataset.documents?.map(d => [d.id, d.text]) ?? []
+            );
+            const matches = p.dataset_hash
+                ? p.dataset_hash === currentHash
+                : p.dataset_id === currentDataset.id;
+            if (!matches) throw new Error('This analysis session belongs to a different dataset.');
+        }
+        if (Array.isArray(p.customClusterLabels) && p.customClusterLabels.length > 0) {
+            if (typeof window !== 'undefined') window.clearActiveClusterLabels?.();
+        }
         if (p.metrics) this.pipeline.metrics?.hydrate(p.metrics);
         if (p.annotations) this.pipeline.annotationsApi?.hydrate(p.annotations);
         if (Array.isArray(p.customClusterLabels)) {
@@ -110,8 +130,10 @@ export class SessionsStore {
             this.pipeline.subsets.clear();
             for (const { subset_id, ...rest } of p.subsets) this.pipeline.subsets.set(subset_id, rest);
         }
-        if (p.filters && typeof window !== 'undefined') {
-            window.currentMetadataFilters = p.filters;
+        if (p.filters && Object.keys(p.filters).length > 0) {
+            this.pipeline.setMcpMetadataFilters?.(p.filters);
+        } else {
+            this.pipeline.clearMcpMetadataFilters?.();
         }
 
         return {
@@ -142,14 +164,14 @@ export class SessionsStore {
 
 export async function hashCanonical(obj) {
     const canonical = canonicalJSON(obj);
-    if (typeof crypto?.subtle?.digest !== 'function') {
+    if (typeof globalThis.crypto?.subtle?.digest !== 'function') {
         // Fallback (deterministic non-crypto). Acceptable for non-secure contexts.
         let h = 5381;
         for (let i = 0; i < canonical.length; i++) h = ((h << 5) + h + canonical.charCodeAt(i)) | 0;
         return `nohash:${(h >>> 0).toString(16)}`;
     }
     const buf = new TextEncoder().encode(canonical);
-    const digest = await crypto.subtle.digest('SHA-256', buf);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', buf);
     return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 

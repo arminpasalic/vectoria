@@ -2,6 +2,14 @@
 // Provides instant, lightweight text search with highlighting and scoring
 // This is now the DEFAULT search mode for better UX
 
+function escapeFastSearchHTML(value) {
+    return window.VectoriaDOM?.escapeHTML?.(value) ?? String(value ?? '');
+}
+
+function safeFastSearchColor(value) {
+    return window.VectoriaDOM?.safeColor?.(value, '#9CA3AF') ?? '#9CA3AF';
+}
+
 class FastSearch {
     constructor(data = []) {
         this.data = data;
@@ -195,6 +203,7 @@ class FastSearch {
                 rank: rank + 1,
                 query: query,
                 matchedText: this.highlightMatches(result.originalText, queryWords),
+                matchedTerms: queryWords,
                 searchType: 'fast',
                 matchCount: result.matchCount,
                 cluster: result.item.cluster,
@@ -418,16 +427,21 @@ class FastSearch {
 
     // Highlight matching terms in text
     highlightMatches(text, queryWords) {
-        if (!text || !queryWords || queryWords.length === 0) return text;
+        const source = String(text ?? '');
+        const terms = [...new Set((queryWords || []).map(String).filter(Boolean))]
+            .sort((a, b) => b.length - a.length);
+        if (!terms.length) return escapeFastSearchHTML(source);
 
-        let highlightedText = text;
-
-        queryWords.forEach(word => {
-            const regex = new RegExp(`(${this._escapeRegExp(word)})`, 'gi');
-            highlightedText = highlightedText.replace(regex, '<mark class="fast-highlight">$1</mark>');
-        });
-
-        return highlightedText;
+        const regex = new RegExp(terms.map(term => this._escapeRegExp(term)).join('|'), 'gi');
+        let output = '';
+        let cursor = 0;
+        let match;
+        while ((match = regex.exec(source)) !== null) {
+            output += escapeFastSearchHTML(source.slice(cursor, match.index));
+            output += `<mark class="fast-highlight">${escapeFastSearchHTML(match[0])}</mark>`;
+            cursor = regex.lastIndex;
+        }
+        return output + escapeFastSearchHTML(source.slice(cursor));
     }
 
     // Escape special regex characters
@@ -498,7 +512,8 @@ class FastSearch {
                 score: result.score,
                 rank: rank + 1,
                 query: query,
-                matchedText: highlightTerms.length > 0 ? this.highlightMatches(result.originalText, highlightTerms) : result.originalText,
+                matchedText: this.highlightMatches(result.originalText, highlightTerms),
+                matchedTerms: highlightTerms,
                 searchType: 'boolean',
                 matchCount: result.matchCount,
                 cluster: result.item.cluster,
@@ -724,7 +739,7 @@ class SearchInterface {
     }
 
     initializeInterface() {
-        // Update search UI to show both options with fast as default
+        // Keep the explorer compact while exposing the three distinct retrieval modes.
         this.setupSearchModeSelector();
         this.setupFastSearchHandlers();
         this.isInitialized = true;
@@ -740,33 +755,28 @@ class SearchInterface {
             // Clear existing options
             searchTypeSelect.innerHTML = '';
 
-            // Add fast search as default (first option)
             const fastOption = document.createElement('option');
             fastOption.value = 'fast';
-            fastOption.textContent = 'Keyword search';
+            fastOption.textContent = 'Keyword';
             searchTypeSelect.appendChild(fastOption);
 
             // Add semantic vector search option
             const semanticOption = document.createElement('option');
             semanticOption.value = 'semantic';
-            semanticOption.textContent = 'Semantic search';
+            semanticOption.textContent = 'Semantic';
             searchTypeSelect.appendChild(semanticOption);
 
-            // Add RAG option
-            const ragOption = document.createElement('option');
-            ragOption.value = 'rag';
-            ragOption.textContent = 'Ask AI (RAG)';
-            searchTypeSelect.appendChild(ragOption);
+            const hybridOption = document.createElement('option');
+            hybridOption.value = 'hybrid';
+            hybridOption.textContent = 'Hybrid';
+            searchTypeSelect.appendChild(hybridOption);
 
-            // Always default to keyword search on load
-            const defaultSearchType = 'fast';
+            const savedSearchType = window.ConfigManager?.getConfig?.()?.ui_preferences?.search_type;
+            const defaultSearchType = ['fast', 'semantic', 'hybrid'].includes(savedSearchType)
+                ? savedSearchType
+                : 'fast';
             searchTypeSelect.value = defaultSearchType;
             this.currentMode = defaultSearchType;
-            if (window.ConfigManager) {
-                window.ConfigManager.updateConfig({
-                    ui_preferences: { search_type: defaultSearchType }
-                });
-            }
 
             const updateResultCountVisibility = (mode) => {
                 if (!resultCountGroup || !resultCountSelect) return;
@@ -776,7 +786,7 @@ class SearchInterface {
                 } else {
                     resultCountGroup.style.display = '';
                     resultCountSelect.disabled = false;
-                    if (mode === 'semantic') {
+                    if (mode === 'semantic' || mode === 'hybrid') {
                         const allowedValues = ['5', '10', '20', '50'];
                         // Remove any non-allowed options
                         Array.from(resultCountSelect.options).forEach(opt => {
@@ -807,7 +817,7 @@ class SearchInterface {
                 } else if (e.target.value === 'rag') {
                     this.currentMode = 'rag';
                 } else {
-                    this.currentMode = 'semantic';
+                    this.currentMode = e.target.value === 'hybrid' ? 'hybrid' : 'semantic';
                 }
                 this.updateSearchPlaceholder();
                 updateResultCountVisibility(e.target.value);
@@ -832,7 +842,10 @@ class SearchInterface {
                 // AUTO-SAVE: Save search type to config
                 if (window.ConfigManager) {
                     window.ConfigManager.updateConfig({
-                        ui_preferences: { search_type: e.target.value }
+                        ui_preferences: { search_type: e.target.value },
+                        search: {
+                            retrieval_mode: e.target.value === 'fast' ? 'keyword' : e.target.value
+                        }
                     });
                 }
             });
@@ -850,19 +863,6 @@ class SearchInterface {
                 ragSettingsBtn.addEventListener('click', () => {
                     if (typeof window.openAdvancedSettingsCategory === 'function') {
                         window.openAdvancedSettingsCategory('rag');
-                        return;
-                    }
-                    const modal = document.getElementById('quick-settings-modal');
-                    if (modal) {
-                        modal.style.display = 'flex';
-                        // Initialize modal interactivity when opened
-                        if (typeof initializeQuickSettingsModal === 'function') {
-                            initializeQuickSettingsModal();
-                        }
-                        // Reload settings from localStorage when modal opens
-                        if (typeof loadQuickSettingsFromStorage === 'function') {
-                            loadQuickSettingsFromStorage();
-                        }
                     }
                 });
             }
@@ -924,13 +924,19 @@ class SearchInterface {
 
             const highlightToggle = document.getElementById('highlight-results');
             if (highlightToggle) {
-                highlightToggle.addEventListener('change', () => {
-                    const enabled = this.isHighlightEnabled();
-                    if (!enabled) {
-                        this.clearVisualizationHighlight();
-                    }
-                    this.updateSearchResultsFooterMessages(enabled);
-                });
+                const config = window.ConfigManager ? window.ConfigManager.getConfig() : null;
+                highlightToggle.checked = config?.ui_preferences?.highlight_results ?? true;
+                if (highlightToggle.dataset.configBound !== 'true') {
+                    highlightToggle.dataset.configBound = 'true';
+                    highlightToggle.addEventListener('change', () => {
+                        const enabled = this.isHighlightEnabled();
+                        if (!enabled) this.clearVisualizationHighlight();
+                        this.updateSearchResultsFooterMessages(enabled);
+                        window.ConfigManager?.updateConfig({
+                            ui_preferences: { highlight_results: enabled }
+                        });
+                    });
+                }
                 this.updateSearchResultsFooterMessages(this.isHighlightEnabled());
             }
         }
@@ -959,28 +965,20 @@ class SearchInterface {
             // No live search; searches trigger on Enter or button
 
             // Enter key for all modes
-            searchInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
+            searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.isComposing) {
                     e.preventDefault();
                     this.performSearch();
                 }
             });
 
-            // Auto-clear search results when input becomes empty
-            searchInput.addEventListener('keyup', (e) => {
-                const query = e.target.value.trim();
-                if (query === '') {
-                    // User cleared the input - automatically clear search results
-                    this.clearSearchResults();
-                }
-            });
-
-            // Also handle paste/cut events that might clear the input
+            // The input event covers typing, paste, and cut without a duplicate
+            // keyup handler. Prefer Vectoria's full reset when it is available.
             searchInput.addEventListener('input', (e) => {
                 const query = e.target.value.trim();
                 if (query === '') {
-                    // Input was cleared via paste/cut - automatically clear search results
-                    this.clearSearchResults();
+                    if (typeof window.clearSearch === 'function') window.clearSearch();
+                    else this.clearSearchResults();
                 }
             });
 
@@ -1007,6 +1005,7 @@ class SearchInterface {
             const placeholders = {
                 fast: 'Search by keyword (use + to require, - to exclude, or "quotes" for phrases)...',
                 semantic: 'Enter semantic query...',
+                hybrid: 'Search by meaning and exact terms...',
                 rag: 'Ask questions about your data — the AI will find the most relevant parts and answer…'
             };
             searchInput.placeholder = placeholders[this.currentMode] || 'Search...';
@@ -1019,6 +1018,14 @@ class SearchInterface {
             ragModeUI.style.display = isActive ? 'block' : 'none';
         }
         document.body.classList.toggle('rag-mode-active', isActive);
+        this.syncRAGGenerationUI(isActive);
+
+        if (!this._ragModeStateWired) {
+            this._ragModeStateWired = true;
+            const refresh = () => this.syncRAGGenerationUI(document.getElementById('search-type')?.value === 'rag');
+            document.addEventListener('vectoria:mcp-state', refresh);
+            document.addEventListener('vectoria:generation-mode-changed', refresh);
+        }
 
         // Update scope text and metadata chips when RAG is activated
         if (isActive) {
@@ -1030,13 +1037,43 @@ class SearchInterface {
 
     }
 
+    syncRAGGenerationUI(isActive) {
+        const searchBtn = document.getElementById('search-btn');
+        const external = window.__vectoriaGenerationMode === 'external';
+        const state = window.__vectoriaMCPState || {};
+        if (searchBtn) {
+            let label = 'Search';
+            let icon = 'fa-search';
+            if (isActive) {
+                icon = 'fa-robot';
+                if (!external) label = 'Ask local AI';
+                else label = `Prepare for ${state.clientName || 'AI client'}`;
+            }
+            searchBtn.innerHTML = `<i class="fas ${icon}"></i> ${escapeFastSearchHTML(label)}`;
+        }
+
+        const hydeToggle = document.getElementById('hyde-mode-toggle');
+        if (hydeToggle) {
+            hydeToggle.disabled = external;
+            hydeToggle.title = external ? 'HyDE requires the local browser model and is unavailable in AI client mode.' : '';
+        }
+        const hydeSettings = document.getElementById('hyde-configuration-disclosure');
+        if (hydeSettings) {
+            hydeSettings.toggleAttribute('data-unavailable', external);
+            if (external) hydeSettings.open = false;
+            hydeSettings.querySelectorAll('input, textarea, select, button').forEach(control => {
+                control.disabled = external;
+            });
+        }
+    }
+
     updateRAGScopeText() {
         const scopeText = document.getElementById('rag-scope-text');
         if (!scopeText) return;
 
         // Get scope info from the determineRAGScope function if available
-        if (typeof determineRAGScope === 'function') {
-            const scopeInfo = determineRAGScope();
+        if (typeof window.getCurrentRAGScope === 'function') {
+            const scopeInfo = window.getCurrentRAGScope('all');
             if (scopeInfo && scopeInfo.label) {
                 if (scopeInfo.scopeType === 'all') {
                     const count = scopeInfo.scopedCount.toLocaleString();
@@ -1066,6 +1103,11 @@ class SearchInterface {
             this.showToast('Please enter a search query', 'warning');
             return;
         }
+
+        // Evidence is the destination for every submitted search, including a
+        // search started from Chat or one that later reports an availability
+        // error. Conversation and composer state remain untouched.
+        window.VectoriaWorkspace?.showSearchResults?.();
 
         // Check if search is ready
         if (searchType === 'fast' && !window.fastSearchReady) {
@@ -1195,9 +1237,10 @@ class SearchInterface {
 
         // Update results count
         if (resultsCount) {
+            const resultNoun = searchData.results.length === 1 ? 'result' : 'results';
             resultsCount.innerHTML = `
                 <div style="display: flex; align-items: center; gap: 10px;">
-                    <span>${searchData.results.length} results found • Search</span>
+                    <span>${searchData.results.length} ${resultNoun} found • Search</span>
                     ${hasActiveFilters ? '<span class="filter-badge" title="Results limited to filtered data">Filtered</span>' : ''}
                 </div>
             `;
@@ -1210,6 +1253,7 @@ class SearchInterface {
 
         // Update text list with results
         this.updateTextListWithFastResults(searchData.results, searchData.query);
+        window.VectoriaWorkspace?.showSearchResults?.();
     }
 
     displayNoResults(query) {
@@ -1241,6 +1285,24 @@ class SearchInterface {
             query: query
         };
 
+        if (typeof window.updateTextList === 'function') {
+            const points = results.map((result, index) => ({
+                ...(result.item || {}),
+                ...result,
+                index: Number.isFinite(Number(result.index)) ? Number(result.index) : index,
+                text: String(result.originalText || result.text || result.item?.text || 'No content available'),
+                cluster: result.cluster !== undefined ? result.cluster : (result.metadata?.cluster ?? result.item?.cluster ?? 0),
+                score: result.score,
+                search_type: 'fast',
+                search_rank: index + 1,
+                search_query: query,
+                is_search_result: true
+            }));
+            window.unlockTextList?.('fast search results');
+            window.updateTextList(points, { force: true });
+            return;
+        }
+
         // Clear current text list
         textList.innerHTML = '';
 
@@ -1249,12 +1311,12 @@ class SearchInterface {
         header.className = 'search-results-header';
         const hasActiveFilters = (window.getActiveMetadataFilters && Object.keys(window.getActiveMetadataFilters() || {}).length > 0);
         header.innerHTML = `
-            <div style="padding: 12px; background: linear-gradient(135deg, #ffd700 0%, #ff8f00 100%); color: #000; border-radius: 8px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(255, 215, 0, 0.3);">
-                <h3 style="margin: 0 0 8px 0; font-size: 1.1em; color: #000;">
+            <div class="search-result-summary">
+                <h3>
                     Search Results
                 </h3>
-                <div style="font-size: 0.9em; opacity: 0.9; color: #000; display:flex; align-items:center; gap:10px;">
-                    ${results.length} matches for "${query}"
+                <div class="search-result-summary-meta">
+                    ${results.length} matches for "${escapeFastSearchHTML(query)}"
                     ${hasActiveFilters ? '<span class="filter-badge" title="Results limited to filtered data">Filtered</span>' : ''}
                 </div>
             </div>
@@ -1270,22 +1332,30 @@ class SearchInterface {
 
             // Cluster can be at top level (regular search) or in metadata (RAG/vector search)
             const cluster = result.cluster !== undefined ? result.cluster : (result.metadata?.cluster ?? 0);
-            const clusterColor = this.getClusterColor(cluster);
-            const clusterName = this.getClusterName(cluster);
+            const clusterColor = safeFastSearchColor(this.getClusterColor(cluster));
+            const clusterName = escapeFastSearchHTML(this.getClusterName(cluster));
 
-            const displayText = result.originalText || result.text || 'No content available';
-            const scoreDisplay = `<span class="fast-search-score">${result.score.toFixed(0)}</span>`;
+            const displayText = String(result.originalText || result.text || 'No content available');
+            const score = Number(result.score);
+            const scoreDisplay = `<span class="fast-search-score">${Number.isFinite(score) ? score.toFixed(0) : '0'}</span>`;
+            const previewText = displayText.substring(0, 200);
+            const matchedTerms = Array.isArray(result.matchedTerms)
+                ? result.matchedTerms
+                : this._extractWords(String(query || '').toLowerCase());
+            const previewMarkup = this.fastSearch
+                ? this.fastSearch.highlightMatches(previewText, matchedTerms)
+                : escapeFastSearchHTML(previewText);
 
             item.innerHTML = `
                 <div class="text-item-header">
-                    <span class="cluster-indicator" style="background-color: ${clusterColor}; box-shadow: 0 0 0 2px rgba(255,215,0,0.6);"></span>
+                    <span class="cluster-indicator" style="background-color: ${clusterColor};"></span>
                     <span class="item-title">Result ${index + 1} - ${clusterName}</span>
                     <div class="result-badges">
                         ${scoreDisplay}
                     </div>
                 </div>
                 <div class="text-preview enhanced-preview">
-                    ${result.matchedText ? result.matchedText.substring(0, 200) : displayText.substring(0, 200)}${displayText.length > 200 ? '...' : ''}
+                    ${previewMarkup}${displayText.length > 200 ? '...' : ''}
                 </div>
             `;
 
@@ -1327,7 +1397,7 @@ class SearchInterface {
         const highlightOffText = 'Search results';
         const footerText = highlightEnabled ? highlightOnText : highlightOffText;
         footer.innerHTML = `
-            <div style="padding: 8px 12px; background: rgba(255,215,0,0.1); border-radius: 6px; margin-top: 16px; text-align: center; font-size: 0.85em; color: #666;">
+            <div class="search-results-footer-inner">
                 <span class="search-results-footer-message" data-highlight-on="${highlightOnText}" data-highlight-off="${highlightOffText}">${footerText}</span>
             </div>
         `;
@@ -1468,7 +1538,11 @@ class SearchInterface {
                 if (typeof window.unlockTextList === 'function') {
                     window.unlockTextList('fast search cleared');
                 }
-                window.updateTextList(window.currentVisualizationData.points, { force: true });
+                const activeFilters = window.getActiveMetadataFilters?.() || {};
+                const points = window.filterVisualizationPointsByMetadata
+                    ? window.filterVisualizationPointsByMetadata(window.currentVisualizationData.points, activeFilters)
+                    : window.currentVisualizationData.points;
+                window.updateTextList(points, { force: true });
             }
         }
 
@@ -1541,18 +1615,17 @@ function initializeFastSearch(data) {
 }
 
 // ============================================================================
-// Quick Settings Modal Handler
+// Search & answers settings handler
 // ============================================================================
 
 function initializeQuickSettingsModal() {
-    const modal = document.getElementById('quick-settings-modal');
-    const closeBtn = document.getElementById('close-quick-settings');
-    const applyBtn = document.getElementById('apply-quick-settings');
+    const settingsRoot = document.getElementById('advanced-rag-settings-host');
     const resetBtn = document.getElementById('reset-quick-settings');
 
     // New controls for hybrid search
     const vectorWeightSlider = document.getElementById('quick-vector-weight');
     const retrievalKSlider = document.getElementById('quick-retrieval-k');
+    const rerankerToggle = document.getElementById('reranker-enabled');
 
     // Existing LLM controls
     const temperatureSlider = document.getElementById('quick-temperature');
@@ -1567,16 +1640,16 @@ function initializeQuickSettingsModal() {
     const hydeMaxTokensSlider = document.getElementById('hyde-max-tokens');
     const hydePromptTextarea = document.getElementById('hyde-prompt');
 
-    if (!modal) {
-        console.error('⚠️ Quick settings modal not found - initialization aborted');
+    if (!settingsRoot) {
+        console.error('⚠️ Search & answers settings not found - initialization aborted');
         return;
     }
 
     // Check if already initialized to prevent duplicate listeners
-    if (modal.dataset.quickSettingsInitialized === 'true') {
+    if (settingsRoot.dataset.quickSettingsInitialized === 'true') {
         return;
     }
-    modal.dataset.quickSettingsInitialized = 'true';
+    settingsRoot.dataset.quickSettingsInitialized = 'true';
 
     // Auto-save timeout for debouncing
     let autoSaveTimeout = null;
@@ -1590,22 +1663,24 @@ function initializeQuickSettingsModal() {
 
             // Extract values from config (with defaults from DEFAULT_CONFIG)
             const settings = {
-                vectorWeight: config.search?.vector_weight ?? defaults.search?.vector_weight ?? 0.6,
-                retrievalK: config.search?.retrieval_k ?? defaults.search?.retrieval_k ?? 60,
-                temperature: config.llm?.temperature ?? defaults.llm?.temperature ?? 0.5,
-                maxTokens: config.llm?.max_tokens ?? defaults.llm?.max_tokens ?? 768,
-                topP: config.llm?.top_p ?? defaults.llm?.top_p ?? 0.9,
-                repeatPenalty: config.llm?.repeat_penalty ?? defaults.llm?.repeat_penalty ?? 1.25,
-                systemPrompt: config.rag_prompts?.system_prompt ?? defaults.rag_prompts?.system_prompt ?? '',
-                userTemplate: config.rag_prompts?.user_template ?? defaults.rag_prompts?.user_template ?? '',
-                hydePrompt: config.hyde?.prompt ?? defaults.hyde?.prompt ?? '',
-                hydeTemperature: config.hyde?.temperature ?? defaults.hyde?.temperature ?? 0.2,
-                hydeMaxTokens: config.hyde?.max_tokens ?? defaults.hyde?.max_tokens ?? 256
+                vectorWeight: config.search?.vector_weight ?? defaults.search?.vector_weight,
+                retrievalK: config.search?.retrieval_k ?? defaults.search?.retrieval_k,
+                rerankerEnabled: config.search?.reranker_enabled === true,
+                temperature: config.llm?.temperature ?? defaults.llm?.temperature,
+                maxTokens: config.llm?.max_tokens ?? defaults.llm?.max_tokens,
+                topP: config.llm?.top_p ?? defaults.llm?.top_p,
+                repeatPenalty: config.llm?.repeat_penalty ?? defaults.llm?.repeat_penalty,
+                systemPrompt: config.rag_prompts?.system_prompt ?? defaults.rag_prompts?.system_prompt,
+                userTemplate: config.rag_prompts?.user_template ?? defaults.rag_prompts?.user_template,
+                hydePrompt: config.hyde?.prompt ?? defaults.hyde?.prompt,
+                hydeTemperature: config.hyde?.temperature ?? defaults.hyde?.temperature,
+                hydeMaxTokens: config.hyde?.max_tokens ?? defaults.hyde?.max_tokens
             };
 
             // Set UI values for RAG controls
             if (vectorWeightSlider) vectorWeightSlider.value = settings.vectorWeight * 100;
             if (retrievalKSlider) retrievalKSlider.value = settings.retrievalK;
+            if (rerankerToggle) rerankerToggle.checked = settings.rerankerEnabled;
             if (temperatureSlider) temperatureSlider.value = settings.temperature;
             if (maxTokensSlider) maxTokensSlider.value = settings.maxTokens;
             if (topPSlider) topPSlider.value = settings.topP;
@@ -1617,6 +1692,8 @@ function initializeQuickSettingsModal() {
             if (hydeTemperatureSlider) hydeTemperatureSlider.value = settings.hydeTemperature;
             if (hydeMaxTokensSlider) hydeMaxTokensSlider.value = settings.hydeMaxTokens;
             if (hydePromptTextarea) hydePromptTextarea.value = settings.hydePrompt;
+            const highlightToggle = document.getElementById('highlight-results');
+            if (highlightToggle) highlightToggle.checked = config.ui_preferences?.highlight_results ?? true;
 
             updateSliderValues();
 
@@ -1625,7 +1702,7 @@ function initializeQuickSettingsModal() {
             if (thinkHint) {
                 const modelId = config.llm?.model_id;
                 const constraints = typeof getModelConstraints === 'function' ? getModelConstraints(modelId) : null;
-                thinkHint.style.display = constraints?.hasThinkMode ? 'block' : 'none';
+                thinkHint.hidden = !constraints?.hasThinkMode;
             }
 
         } catch (error) {
@@ -1634,7 +1711,7 @@ function initializeQuickSettingsModal() {
         }
     }
 
-    // Make loadQuickSettings available globally so it can be called when modal opens
+    // Keep the legacy global name for compatibility with existing callers.
     window.loadQuickSettingsFromStorage = loadQuickSettings;
 
     // Auto-save function (debounced, saves to localStorage via ConfigManager)
@@ -1656,13 +1733,14 @@ function initializeQuickSettingsModal() {
                 const updates = {
                     search: {
                         vector_weight: vectorWeightSlider ? parseFloat(vectorWeightSlider.value) / 100 : 0.6,
-                        retrieval_k: retrievalKSlider ? parseInt(retrievalKSlider.value, 10) : 60
+                        retrieval_k: retrievalKSlider ? parseInt(retrievalKSlider.value, 10) : 60,
+                        reranker_enabled: rerankerToggle?.checked === true
                     },
                     llm: {
                         temperature: temperatureSlider ? parseFloat(temperatureSlider.value) : 0.5,
                         max_tokens: maxTokensSlider ? parseInt(maxTokensSlider.value, 10) : 768,
-                        top_p: topPSlider ? parseFloat(topPSlider.value) : 0.9,
-                        repeat_penalty: repeatPenaltySlider ? parseFloat(repeatPenaltySlider.value) : 1.25
+                        top_p: topPSlider ? parseFloat(topPSlider.value) : 0.8,
+                        repeat_penalty: repeatPenaltySlider ? parseFloat(repeatPenaltySlider.value) : 1.1
                     },
                     rag_prompts: {
                         system_prompt: systemPromptTextarea ? systemPromptTextarea.value : '',
@@ -1729,52 +1807,7 @@ function initializeQuickSettingsModal() {
         }
     }
 
-    // Tab switching
-    const settingsTabs = document.querySelectorAll('.settings-tab');
-    const ragTabContent = document.getElementById('rag-tab');
-    const hydeTabContent = document.getElementById('hyde-tab');
-
-    settingsTabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            const targetTab = tab.dataset.tab;
-
-            // Update tab button styles
-            settingsTabs.forEach(t => {
-                t.classList.remove('active');
-                t.style.borderBottomColor = '';
-                t.style.color = '';
-            });
-            tab.classList.add('active');
-
-            // Show/hide tab content
-            if (targetTab === 'rag-tab') {
-                if (ragTabContent) ragTabContent.style.display = 'block';
-                if (hydeTabContent) hydeTabContent.style.display = 'none';
-            } else if (targetTab === 'hyde-tab') {
-                if (ragTabContent) ragTabContent.style.display = 'none';
-                if (hydeTabContent) hydeTabContent.style.display = 'block';
-            }
-        });
-    });
-
-    // Close modal handlers
-    if (closeBtn) {
-        closeBtn.addEventListener('click', () => {
-            modal.style.display = 'none';
-        });
-    } else {
-        console.error('⚠️ Close button not found!');
-    }
-
-    // Close on Escape key
-    const handleEscapeKey = (event) => {
-        if (event.key === 'Escape' && modal.style.display !== 'none') {
-            modal.style.display = 'none';
-        }
-    };
-    document.addEventListener('keydown', handleEscapeKey);
-
-    // Update value displays when sliders change + AUTO-SAVE
+   // Update value displays when sliders change + AUTO-SAVE
     const sliders = [retrievalKSlider, vectorWeightSlider, temperatureSlider, maxTokensSlider, topPSlider, repeatPenaltySlider, hydeTemperatureSlider, hydeMaxTokensSlider].filter(Boolean);
     sliders.forEach(slider => {
         slider.addEventListener('input', () => {
@@ -1791,56 +1824,17 @@ function initializeQuickSettingsModal() {
         });
     });
 
-    // Apply settings (now uses ConfigManager - auto-save makes this optional but kept for explicit saves)
-    if (applyBtn) {
-        applyBtn.addEventListener('click', async () => {
-            try {
-                if (!window.ConfigManager) {
-                    throw new Error('ConfigManager not available');
-                }
+    rerankerToggle?.addEventListener('change', () => {
+        autoSaveQuickSettings();
+        if (!rerankerToggle.checked) window.browserML?.pipeline?.reranker?.suspend?.('disabled');
+        if (typeof showToast === 'function') {
+            showToast(rerankerToggle.checked
+                ? 'Multilingual reranking will load on the next semantic or hybrid search.'
+                : 'Using standard E5-small + BM25 ranking.', 'info');
+        }
+    });
 
-                // Gather current values from UI
-                const updates = {
-                    search: {
-                        vector_weight: vectorWeightSlider ? parseFloat(vectorWeightSlider.value) / 100 : 0.6,
-                        retrieval_k: retrievalKSlider ? parseInt(retrievalKSlider.value, 10) : 60
-                    },
-                    llm: {
-                        temperature: temperatureSlider ? parseFloat(temperatureSlider.value) : 0.5,
-                        max_tokens: maxTokensSlider ? parseInt(maxTokensSlider.value, 10) : 768,
-                        top_p: topPSlider ? parseFloat(topPSlider.value) : 0.9,
-                        repeat_penalty: repeatPenaltySlider ? parseFloat(repeatPenaltySlider.value) : 1.25
-                    },
-                    rag_prompts: {
-                        system_prompt: systemPromptTextarea ? systemPromptTextarea.value : '',
-                        user_template: userTemplateTextarea ? userTemplateTextarea.value : ''
-                    },
-                    hyde: {
-                        prompt: hydePromptTextarea ? hydePromptTextarea.value : '',
-                        temperature: hydeTemperatureSlider ? parseFloat(hydeTemperatureSlider.value) : 0.2,
-                        max_tokens: hydeMaxTokensSlider ? parseInt(hydeMaxTokensSlider.value, 10) : 256
-                    }
-                };
-
-                // Save via ConfigManager
-                window.ConfigManager.updateConfig(updates);
-                if (typeof showToast === 'function') {
-                    showToast('RAG settings saved successfully', 'success');
-                }
-
-                modal.style.display = 'none';
-            } catch (error) {
-                console.error('❌ Failed to save RAG settings:', error);
-                if (typeof showToast === 'function') {
-                    showToast(`Failed to save settings: ${error.message}`, 'error');
-                }
-            }
-        });
-    } else {
-        console.error('⚠️ Apply button not found!');
-    }
-
-    // Reset to defaults (uses ConfigManager.resetConfig())
+   // Reset to defaults (uses ConfigManager.resetConfig())
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
             try {
@@ -1857,7 +1851,8 @@ function initializeQuickSettingsModal() {
                     search: {
                         ...currentConfig.search,
                         vector_weight: defaults.search.vector_weight,
-                        retrieval_k: defaults.search.retrieval_k
+                        retrieval_k: defaults.search.retrieval_k,
+                        reranker_enabled: false
                     },
                     llm: {
                         ...currentConfig.llm,
@@ -1867,28 +1862,36 @@ function initializeQuickSettingsModal() {
                         repeat_penalty: defaults.llm.repeat_penalty
                     },
                     rag_prompts: { ...defaults.rag_prompts },
-                    hyde: { ...defaults.hyde }
+                    chat_prompts: { ...defaults.chat_prompts },
+                    hyde: { ...defaults.hyde },
+                    ui_preferences: {
+                        ...currentConfig.ui_preferences,
+                        highlight_results: defaults.ui_preferences.highlight_results
+                    }
                 };
 
                 window.ConfigManager.updateConfig(partialReset);
 
                 // Reload UI from reset defaults
-                if (vectorWeightSlider) vectorWeightSlider.value = (defaults.search?.vector_weight ?? 0.6) * 100;
-                if (retrievalKSlider) retrievalKSlider.value = defaults.search?.retrieval_k ?? 60;
-                if (temperatureSlider) temperatureSlider.value = defaults.llm?.temperature ?? 0.5;
-                if (maxTokensSlider) maxTokensSlider.value = defaults.llm?.max_tokens ?? 768;
-                if (topPSlider) topPSlider.value = defaults.llm?.top_p ?? 0.9;
-                if (repeatPenaltySlider) repeatPenaltySlider.value = defaults.llm?.repeat_penalty ?? 1.25;
+                if (vectorWeightSlider) vectorWeightSlider.value = (defaults.search?.vector_weight) * 100;
+                if (retrievalKSlider) retrievalKSlider.value = defaults.search?.retrieval_k;
+                if (rerankerToggle) rerankerToggle.checked = false;
+                if (temperatureSlider) temperatureSlider.value = defaults.llm?.temperature;
+                if (maxTokensSlider) maxTokensSlider.value = defaults.llm?.max_tokens;
+                if (topPSlider) topPSlider.value = defaults.llm?.top_p;
+                if (repeatPenaltySlider) repeatPenaltySlider.value = defaults.llm?.repeat_penalty;
                 if (systemPromptTextarea) systemPromptTextarea.value = defaults.rag_prompts?.system_prompt ?? '';
                 if (userTemplateTextarea) userTemplateTextarea.value = defaults.rag_prompts?.user_template ?? '';
-                if (hydeTemperatureSlider) hydeTemperatureSlider.value = defaults.hyde?.temperature ?? 0.2;
-                if (hydeMaxTokensSlider) hydeMaxTokensSlider.value = defaults.hyde?.max_tokens ?? 256;
+                if (hydeTemperatureSlider) hydeTemperatureSlider.value = defaults.hyde?.temperature;
+                if (hydeMaxTokensSlider) hydeMaxTokensSlider.value = defaults.hyde?.max_tokens;
                 if (hydePromptTextarea) hydePromptTextarea.value = defaults.hyde?.prompt ?? '';
+                const highlightToggle = document.getElementById('highlight-results');
+                if (highlightToggle) highlightToggle.checked = defaults.ui_preferences?.highlight_results ?? true;
 
                 updateSliderValues();
 
                 if (typeof showToast === 'function') {
-                    showToast('RAG Search Settings reset to defaults', 'info');
+                    showToast('Search & answers settings reset to defaults', 'info');
                 }
 
             } catch (error) {

@@ -532,8 +532,12 @@ class WebGLRenderer {
         this.gl.uniform1f(this.uniforms.pointScale, 1.0);
         this.gl.uniform1i(this.uniforms.enableCircles, true);
         this.gl.uniform1i(this.uniforms.enableOutlines, this.enableOutlines);
-        // Subtle stroke: white with 30% opacity (rgba(255, 255, 255, 0.3))
-        this.gl.uniform4f(this.uniforms.outlineColor, 1.0, 1.0, 1.0, 0.3);
+        if (isDark) {
+            this.gl.uniform4f(this.uniforms.outlineColor, 1.0, 1.0, 1.0, 0.34);
+        } else {
+            const neutralOutline = 30 / 255;
+            this.gl.uniform4f(this.uniforms.outlineColor, neutralOutline, neutralOutline, neutralOutline, 0.48);
+        }
         this.gl.uniform1f(this.uniforms.outlineWidth, 1.0);
 
         // Bind buffers and set attributes
@@ -797,9 +801,6 @@ class EnhancedCanvasVisualization extends CanvasVisualization {
         
         this.useWebGL = !this.webglRenderer.useFallback && options.useWebGL !== false;
         
-        // Only log if WebGL is successfully enabled (don't spam console with fallback messages)
-        if (this.useWebGL) {
-        }
     }
     
     loadData(points) {
@@ -869,6 +870,47 @@ class EnhancedCanvasVisualization extends CanvasVisualization {
             this.webglRenderer.updateHighlighting(selectedArray, []);
         }
         this.requestRender();
+    }
+
+    _syncChatPreview() {
+        if (!this.useWebGL || !this.webglRenderer) return;
+        // A source hover temporarily owns focus, matching point-click dimming
+        // without mutating committed point or lasso selections. Clearing the
+        // preview restores those owners through this same synchronization path.
+        const highlighted = typeof this.chatPreviewPoint === 'number'
+            ? new Set([this.chatPreviewPoint])
+            : new Set(this.lassoSelectedIndices ? [...this.lassoSelectedIndices] : []);
+        if (typeof this.chatPreviewPoint !== 'number' && typeof this.highlightedPoint === 'number') {
+            highlighted.add(this.highlightedPoint);
+        }
+        const documentResults = [];
+        const docIds = new Set([
+            ...(this.highlightedDocs ? [...this.highlightedDocs] : []),
+            ...(this.chatPreviewDocs ? [...this.chatPreviewDocs] : [])
+        ].map(String));
+        for (const point of this.data || []) {
+            if (docIds.has(String(point.doc_id))) documentResults.push(point);
+        }
+        this.webglRenderer.updateHighlighting([...highlighted], [
+            ...(this.searchResults || []),
+            ...documentResults
+        ]);
+    }
+
+    previewChatPoint(index) {
+        const previewed = super.previewChatPoint(index);
+        if (previewed) this._syncChatPreview();
+        return previewed;
+    }
+
+    pulseChatDocuments(docIds, duration = 1600) {
+        super.pulseChatDocuments(docIds, duration);
+        this._syncChatPreview();
+    }
+
+    clearChatPreview() {
+        super.clearChatPreview();
+        this._syncChatPreview();
     }
 
     enableMetadataFilterMode(filteredIndices) {

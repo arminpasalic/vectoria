@@ -161,8 +161,6 @@ export class BrowserEmbeddings {
 
         if (config.device !== undefined) {
             const normalized = this._normalizeDevicePreference(config.device);
-            if (this.devicePreference && this.devicePreference !== normalized) {
-            }
             this.devicePreference = normalized;
         }
 
@@ -280,10 +278,6 @@ export class BrowserEmbeddings {
 
         if (this.devicePreference === 'webgpu' && targetDevice !== 'webgpu' && this.activeDevice !== targetDevice) {
             console.warn('⚠️ WebGPU requested in settings but not available. Using CPU instead.');
-        }
-
-        if (this.embedder && this.isInitialized && this.activeDevice !== targetDevice) {
-        } else {
         }
 
         this.isInitialized = false;
@@ -424,11 +418,9 @@ export class BrowserEmbeddings {
             // PERFORMANCE: Request high-performance GPU adapter for WebGPU
             if (targetDevice === 'webgpu' && navigator.gpu) {
                 try {
-                    const adapter = await navigator.gpu.requestAdapter({
+                    await navigator.gpu.requestAdapter({
                         powerPreference: 'high-performance'  // Force high-performance mode
                     });
-                    if (adapter) {
-                    }
                 } catch (gpuError) {
                     console.warn('⚠️ Could not request high-performance GPU adapter:', gpuError);
                 }
@@ -444,9 +436,6 @@ export class BrowserEmbeddings {
             console.log = originalConsoleLog;
             console.info = originalConsoleInfo;
 
-            if (targetDevice === 'webgpu') {
-            } else {
-            }
         } catch (error) {
             console.log = originalConsoleLog;
             console.info = originalConsoleInfo;
@@ -580,6 +569,12 @@ export class BrowserEmbeddings {
         const freshConfig = this.loadSavedConfig();
         this._applyConfigOverrides(freshConfig);
 
+        // A cached installation intentionally starts without an embedding worker
+        // in RAM. Restore the worker lazily for processing or semantic retrieval.
+        if (this.useWorker && typeof Worker !== 'undefined' && (!this.workerReady || !this.worker)) {
+            await this.initialize(options.onModelProgress || null);
+        }
+
         // Route to Web Worker if available for true background execution
         if (this.useWorker && this.workerReady && this.worker) {
             // ANTI-THROTTLE: Request wake lock before starting worker embedding
@@ -668,8 +663,6 @@ export class BrowserEmbeddings {
 
         // If nothing to embed, return immediately
         if (itemsToEmbed.length === 0) {
-            if (showProgress) {
-            }
             this._releaseWakeLock();
             return embeddings;
         }

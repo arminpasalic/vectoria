@@ -485,8 +485,6 @@ export class BrowserClustering {
                 // replaceDeleted: false = don't replace deleted points (standard add)
                 index.addPoint(vector, i, false);
 
-                if ((i + 1) % 1000 === 0) {
-                }
             }
 
             // Set ef parameter for search (higher = better recall but slower search)
@@ -522,8 +520,6 @@ export class BrowserClustering {
                 indices.push(neighborIndices);
                 distances.push(neighborDistances);
 
-                if ((i + 1) % 1000 === 0) {
-                }
             }
 
             return { indices, distances };
@@ -1345,4 +1341,3 @@ function bandFor(q) {
     if (q < 2 / 3) return 'mid';
     return 'high';
 }
-

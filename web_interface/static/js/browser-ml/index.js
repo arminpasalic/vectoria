@@ -16,6 +16,40 @@ import { AnalysisService, cleanLabel } from './analysis.js';
 import { AnnotationsStore } from './annotations-store.js';
 import { MetricsRegistry } from './metrics-registry.js';
 import { SessionsStore, hashCanonical as _hashCanonical } from './sessions-store.js';
+import { ChatConversationStore } from './chat-store.js';
+import {
+    buildDocumentHelperReply,
+    buildDocumentChatPrompt,
+    buildChatRetrievalQueries,
+    normalizeLocalAIError,
+    runChatGenerationWithRecovery,
+    routeChatTurn,
+    sanitizeCitationBounds
+} from './chat-context.js';
+import {
+    createMetadataFilterScope,
+    mergeMetadataFilters,
+    normalizeMetadataFilters,
+    serializeMetadataFilterScope
+} from './metadata-filters.js';
+import { BrowserReranker } from './reranker.js';
+import { rerankAndDiversify } from './retrieval-ranking.js';
+
+function applyCitationSafety(result, sources) {
+    if (result?.metadata?.wasStopped) return result;
+    const checked = sanitizeCitationBounds(result?.answer || '', sources?.length || 0);
+    return {
+        ...result,
+        answer: checked.answer,
+        citations: checked.citations,
+        metadata: {
+            ...(result?.metadata || {}),
+            groundingMode: 'llm',
+            validationMethod: 'citation_bounds_only',
+            invalidCitationCount: checked.invalidCitations.length
+        }
+    };
+}
 
 export class BrowserMLPipeline {
     constructor() {
@@ -23,6 +57,8 @@ export class BrowserMLPipeline {
         this.embeddings = new BrowserEmbeddings();
         this.vectorSearch = new BrowserVectorSearch(384); // paraphrase-multilingual-MiniLM-L12-v2 dimension
         this.bm25Search = new BM25Search();
+        this.reranker = new BrowserReranker();
+        this.lastSearchDiagnostics = null;
         this.rag = null; // Will be initialized after vector search is ready
         this.fileProcessor = new BrowserFileProcessor();
         this.clustering = new BrowserClustering();
@@ -30,12 +66,14 @@ export class BrowserMLPipeline {
 
         // Tier 3: Chunk-based retrieval for RAG
         this.chunkVectorSearch = null; // Initialized during processFile
+        this.chunkBM25Search = null;
         this.chunkToParentMap = null;
 
         // State
         this.isInitialized = false;
         this.currentDataset = null;
         this.currentDatasetId = null;
+        this.mcpMetadataFilters = {};
 
         // Processing state
         this.isProcessing = false;
@@ -56,6 +94,7 @@ export class BrowserMLPipeline {
         this.annotationsApi = new AnnotationsStore(this);
         this.metrics        = new MetricsRegistry(this);
         this.sessions       = new SessionsStore(this);
+        this.chat           = new ChatConversationStore(this.storage.chatStore);
     }
 
     /**
@@ -95,6 +134,53 @@ export class BrowserMLPipeline {
     }
 
     async hashCanonical(obj) { return _hashCanonical(obj); }
+
+    setMcpMetadataFilters(filters = {}) {
+        if (!this.currentDataset) throw new Error('No dataset loaded');
+        this.mcpMetadataFilters = normalizeMetadataFilters(filters, this.currentDataset.documents);
+        if (typeof window !== 'undefined') window.currentMetadataFilters = this.mcpMetadataFilters;
+        return this.createMetadataFilterScope({}, { includePersistent: true });
+    }
+
+    clearMcpMetadataFilters() {
+        this.mcpMetadataFilters = {};
+        if (typeof window !== 'undefined') window.currentMetadataFilters = {};
+    }
+
+    resolveMetadataFilters(inlineFilters = {}, { includePersistent = false } = {}) {
+        const documents = this.currentDataset?.documents || [];
+        const inline = normalizeMetadataFilters(inlineFilters || {}, documents);
+        return includePersistent
+            ? mergeMetadataFilters(this.mcpMetadataFilters, inline)
+            : inline;
+    }
+
+    createMetadataFilterScope(inlineFilters = {}, { includePersistent = false } = {}) {
+        const documents = this.currentDataset?.documents || [];
+        const effectiveFilters = this.resolveMetadataFilters(inlineFilters, { includePersistent });
+        return createMetadataFilterScope(documents, effectiveFilters);
+    }
+
+    serializeMetadataFilterScope(scope) {
+        return serializeMetadataFilterScope(scope);
+    }
+
+    combineAllowedDocIds(allowedDocIds, filterScope) {
+        const requested = allowedDocIds === null || allowedDocIds === undefined
+            ? null
+            : new Set((allowedDocIds instanceof Set ? [...allowedDocIds] : [].concat(allowedDocIds)).map(String));
+        const filtered = filterScope?.applied
+            ? new Set(filterScope.indices.map(index => {
+                const document = this.currentDataset?.documents?.[index];
+                return String(document?.id ?? document?.doc_id ?? document?.metadata?.doc_id ?? document?.metadata?.id ?? index);
+            }))
+            : null;
+
+        if (!requested && !filtered) return null;
+        if (!requested) return [...filtered];
+        if (!filtered) return [...requested];
+        return [...requested].filter(id => filtered.has(id));
+    }
 
     /**
      * ANTI-THROTTLE: Request Screen Wake Lock to prevent browser throttling
@@ -160,7 +246,7 @@ export class BrowserMLPipeline {
      * Initialize all ML models
      * @param {Object} callbacks - Progress callbacks
      */
-    async initialize(callbacks = {}) {
+    async initialize(callbacks = {}, options = {}) {
         if (this.isInitialized) {
             return;
         }
@@ -170,17 +256,41 @@ export class BrowserMLPipeline {
             onLLMProgress = null,
             onComplete = null
         } = callbacks;
+        const {
+            deferModels = false,
+            releaseAfterInitialize = false
+        } = options;
 
         try {
-            // 1. Initialize embeddings model
-            await this.embeddings.initialize(onEmbeddingsProgress);
+            // The RAG coordinator is cheap and must exist even while the actual
+            // model runtime remains cold. This lets cached installations restore
+            // instantly without allocating WebLLM GPU/RAM on every page load.
+            if (!this.rag) this.rag = new BrowserRAG(this.vectorSearch, null, null, this.reranker);
+            else this.rag.setReranker(this.reranker);
+            if (this.chunkVectorSearch) {
+                this.rag.setChunkVectorSearch(this.chunkVectorSearch);
+            }
+            if (this.chunkBM25Search) {
+                this.rag.setBM25Search(this.chunkBM25Search);
+            }
 
-            // 2. Initialize LLM (RAG will be created after we have documents)
-            // Create RAG handler (it will initialize engine on first use)
-            this.rag = new BrowserRAG(this.vectorSearch);
-            await this.rag.initialize(onLLMProgress);
+            if (!deferModels) {
+                // Initial setup has to instantiate each runtime once so its files
+                // are downloaded into browser storage. Callers may release both
+                // runtimes immediately afterward while keeping those files cached.
+                await this.embeddings.initialize(onEmbeddingsProgress);
+                // Release embeddings before WebLLM starts so even the one-time
+                // download flow never keeps both model runtimes resident together.
+                if (releaseAfterInitialize) this.embeddings.suspendWorker('models-cached');
+
+                await this.rag.initialize(onLLMProgress);
+                if (releaseAfterInitialize && !this.rag.workerUnloaded) {
+                    this.rag.suspendWorker('models-cached');
+                }
+            }
 
             this.isInitialized = true;
+
             if (onComplete) {
                 onComplete();
             }
@@ -202,6 +312,10 @@ export class BrowserMLPipeline {
     async processFile(file, textColumn, options = {}, onProgress = null) {
         if (!this.isInitialized) {
             throw new Error('Pipeline not initialized. Call initialize() first.');
+        }
+        if (this.rag?.activeOperation) {
+            const active = this.rag.activeOperation;
+            throw new Error(`Cannot process a new file while local AI is ${this.rag._operationLabel(active.owner)}. Stop or finish that task first.`);
         }
 
         this.isProcessing = true;
@@ -229,6 +343,15 @@ export class BrowserMLPipeline {
         // ANTI-THROTTLE: Request wake lock for entire processing pipeline
         await this._requestWakeLock();
 
+        // A connected client may have requested generation while the wake-lock
+        // promise was pending. Never terminate that request underneath it.
+        if (this.rag?.activeOperation) {
+            const active = this.rag.activeOperation;
+            this.isProcessing = false;
+            this._releaseWakeLock();
+            throw new Error(`Cannot process a new file while local AI is ${this.rag._operationLabel(active.owner)}. Stop or finish that task first.`);
+        }
+
         // MEMORY: Suspend LLM worker during heavy processing (frees 1-3GB GPU/RAM).
         // Worker will lazy-reload on first RAG/HyDE query after processing.
         // Skip if LLM was permanently unloaded (workerUnloaded flag).
@@ -237,6 +360,14 @@ export class BrowserMLPipeline {
         }
 
         try {
+            // Cached setup deliberately leaves model runtimes out of memory.
+            // Processing needs embeddings, but the much larger chat LLM stays
+            // cold for the entire processing pipeline and loads on first use.
+            updateProgress('models', 0.01, 'Preparing cached embeddings model...');
+            await this.embeddings.initialize((modelProgress) => {
+                const ratio = Math.min(1, Math.max(0, Number(modelProgress?.progress) || 0));
+                updateProgress('models', 0.01 + (ratio * 0.03), 'Preparing cached embeddings model...');
+            });
 
             // 1. Parse file (10%)
             const parseStart = Date.now();
@@ -339,6 +470,21 @@ export class BrowserMLPipeline {
                     sentenceMinCharacters: chunkConfig.sentence_min_characters || 12,
                     sentenceDelimiters: chunkConfig.sentence_delimiters || ['. ', '! ', '? ', '\n'],
                     sentenceIncludeDelimiter: chunkConfig.sentence_include_delimiter || 'prev',
+                    semanticEmbeddings: textsToEmbed => this.embeddings.embed(textsToEmbed, {
+                        mode: 'passage',
+                        showProgress: false,
+                        useCache: true,
+                        maxLength: config.embeddings?.max_length || 256
+                    }),
+                    semanticThreshold: chunkConfig.semantic_threshold ?? 0.8,
+                    semanticSimilarityWindow: chunkConfig.semantic_similarity_window ?? 3,
+                    semanticFilterWindow: chunkConfig.semantic_filter_window ?? 5,
+                    semanticFilterPolyorder: chunkConfig.semantic_filter_polyorder ?? 3,
+                    semanticFilterTolerance: chunkConfig.semantic_filter_tolerance ?? 0.2,
+                    semanticSkipWindow: chunkConfig.semantic_skip_window ?? 0,
+                    codeLanguage: chunkConfig.code_language || 'auto',
+                    tableMode: chunkConfig.table_mode || 'row',
+                    tableRowsPerChunk: chunkConfig.table_rows_per_chunk ?? 10,
                     fastDelimiters: chunkConfig.fast_delimiters || '\n.?',
                     fastPrefix: chunkConfig.fast_prefix === true,
                     fastConsecutive: chunkConfig.fast_consecutive === true,
@@ -416,6 +562,7 @@ export class BrowserMLPipeline {
             }));
             let chunkIds = chunks.map(c => c.chunk_id);
             chunkBM25Search.buildIndex(chunkDocs, chunkIds);
+            this.chunkBM25Search = chunkBM25Search;
             updateProgress('indexing', 0.52, 'Processing file...');
 
             // Update RAG with BM25 chunk search for hybrid retrieval
@@ -620,6 +767,8 @@ export class BrowserMLPipeline {
             updateProgress('saving', 0.95, 'Processing file...');
 
             // 11. Store current dataset
+            if (typeof window !== 'undefined') window.clearActiveClusterLabels?.();
+            this.clearMcpMetadataFilters();
             this.currentDataset = {
                 id: datasetId,
                 fileName: file.name,
@@ -638,6 +787,12 @@ export class BrowserMLPipeline {
                 clusterKeywords: clusterKeywordData
             };
             this.currentDatasetId = datasetId;
+
+            if (typeof document !== 'undefined') {
+                document.dispatchEvent(new CustomEvent('vectoria:dataset-changed', {
+                    detail: { datasetId, reason: 'processed' }
+                }));
+            }
 
             updateProgress('complete', 1.0, 'Processing complete!');
 
@@ -714,22 +869,66 @@ export class BrowserMLPipeline {
         const {
             searchType = 'fast', // 'fast' (keyword/BM25) or 'semantic'
             k = 10,
-            minScore = 0.0
+            minScore = 0.0,
+            filter = null,
+            vectorWeight = 0.6,
+            rerankerEnabled = undefined,
+            signal = null,
+            onRerankerProgress = null
         } = options;
 
         const normalizedType = (searchType || 'fast').toLowerCase();
         let results;
+        const configRerankerEnabled = typeof window !== 'undefined'
+            && window.ConfigManager?.getConfig?.()?.search?.reranker_enabled === true;
+        const useReranker = rerankerEnabled === undefined ? configRerankerEnabled : rerankerEnabled === true;
 
         if (normalizedType === 'keyword' || normalizedType === 'bm25' || normalizedType === 'normal' || normalizedType === 'fast') {
             // Keyword/BM25 search
-            results = this.bm25Search.search(query, k);
+            results = this.bm25Search.search(query, k, { filter });
+        } else if (normalizedType === 'hybrid') {
+            const queryEmbedding = await this.embeddings.embedSingle(query, { mode: 'query' });
+            const candidateK = useReranker ? Math.max(k * 4, 40) : k;
+            const vectorResults = this.vectorSearch.search(queryEmbedding, candidateK, {
+                minScore,
+                includeMetadata: true,
+                filter
+            });
+            const bm25Results = this.bm25Search.search(query, candidateK, { filter });
+            results = fuseSearchResults(vectorResults, bm25Results, {
+                k: useReranker ? candidateK : k,
+                vectorWeight
+            });
         } else {
             // Semantic vector search (default)
             const queryEmbedding = await this.embeddings.embedSingle(query, { mode: 'query' });
-            results = this.vectorSearch.search(queryEmbedding, k, { minScore, includeMetadata: true });
+            results = this.vectorSearch.search(queryEmbedding, useReranker ? Math.max(k * 4, 40) : k, {
+                minScore,
+                includeMetadata: true,
+                filter
+            });
         }
 
-        return results;
+        if (useReranker && normalizedType !== 'fast' && normalizedType !== 'keyword'
+            && normalizedType !== 'bm25' && normalizedType !== 'normal') {
+            const neural = await this.reranker.rerank(query, results, { signal, onProgress: onRerankerProgress });
+            results = neural.results;
+            this.lastSearchDiagnostics = neural.diagnostics;
+            if (neural.diagnostics.reranker_applied) {
+                results = rerankAndDiversify(results, query, { maxResults: k });
+                this.lastSearchDiagnostics.post_fusion = 'neural_rrf_coverage_mmr_v1';
+            }
+        } else {
+            this.lastSearchDiagnostics = {
+                reranker_applied: false,
+                reranker_model: null,
+                reranker_candidates: 0,
+                reranker_latency_ms: 0,
+                reranker_fallback_reason: null
+            };
+        }
+
+        return results.slice(0, k);
     }
 
     /**
@@ -737,15 +936,28 @@ export class BrowserMLPipeline {
      * @param {string} question - Question to answer
      * @param {Object} options - RAG options
      */
+    async queryLocalGrounded(question, options = {}) {
+        return this.queryRAG(question, options);
+    }
+
     async queryRAG(question, options = {}) {
         if (!this.currentDataset) {
             throw new Error('No dataset loaded');
         }
+        if (this.isProcessing) throw new Error('Wait for data processing to finish before using local AI.');
 
         if (!this.rag) {
             throw new Error('RAG not initialized');
         }
 
+        const datasetRef = this.currentDataset;
+        const datasetId = this.currentDatasetId || datasetRef?.id || null;
+        const suppliedOperation = options.operationToken || null;
+        const operationToken = suppliedOperation || this.rag.beginOperation(options.owner || 'rag', { datasetId });
+        const ownsOperation = !suppliedOperation;
+        this.rag.assertOperation(operationToken);
+
+        try {
         const {
             numResults = 5,
             searchType = 'semantic',
@@ -757,38 +969,428 @@ export class BrowserMLPipeline {
             metadataFields = undefined,
             hydeText = null,  // Optional HyDE text for embedding
             allowedDocIds = null,
-            retrievalK = null
+            retrievalK = null,
+            vectorWeight = undefined,
+            similarityThreshold = undefined,
+            metadataFilters = {},
+            includePersistentFilters = false
         } = options;
+        const filterScope = this.createMetadataFilterScope(metadataFilters, {
+            includePersistent: includePersistentFilters
+        });
+        const effectiveAllowedDocIds = this.combineAllowedDocIds(allowedDocIds, filterScope);
 
         // Generate question embedding (use HyDE text if provided, otherwise original question)
         const textToEmbed = hydeText || question;
         const questionEmbedding = await this.embeddings.embedSingle(textToEmbed, { mode: 'query' });
 
+        if (filterScope.applied && filterScope.matchedDocuments === 0) {
+            return {
+                answer: '',
+                sources: [],
+                metadata: {
+                    generationProvider: 'local',
+                    filter: this.serializeMetadataFilterScope(filterScope)
+                }
+            };
+        }
+
+        let result;
         if (stream && onChunk) {
-            // Streaming response
-            return await this.rag.queryStream(question, questionEmbedding, onChunk, {
+            result = await this.rag.queryStream(question, questionEmbedding, onChunk, {
                 numResults,
                 searchType,
                 temperature,
                 maxTokens,
                 includeMetadata,
                 metadataFields,
-                allowedDocIds,
-                retrievalK
+                allowedDocIds: effectiveAllowedDocIds,
+                retrievalK,
+                vectorWeight,
+                similarityThreshold,
+                operationToken,
+                owner: options.owner || 'rag',
+                onStatus: options.onStatus
             });
         } else {
             // Regular response
-            return await this.rag.query(question, questionEmbedding, {
+            result = await this.rag.query(question, questionEmbedding, {
                 numResults,
                 searchType,
                 temperature,
                 maxTokens,
                 includeMetadata,
                 metadataFields,
-                allowedDocIds,
-                retrievalK
+                allowedDocIds: effectiveAllowedDocIds,
+                retrievalK,
+                vectorWeight,
+                similarityThreshold,
+                operationToken,
+                owner: options.owner || 'rag',
+                onStatus: options.onStatus
             });
         }
+        if (this.currentDataset !== datasetRef || String(this.currentDatasetId || '') !== String(datasetId || '')) {
+            throw new Error('The active dataset changed while the RAG question was running.');
+        }
+        result = applyCitationSafety(result, result.sources || []);
+        result.metadata = {
+            ...(result.metadata || {}),
+            filter: this.serializeMetadataFilterScope(filterScope),
+            groundingMode: 'llm'
+        };
+        return result;
+        } finally {
+            if (ownsOperation) this.rag.endOperation(operationToken);
+        }
+    }
+
+    /**
+     * Conversational RAG for Vectoria's local browser chat. This path remains
+     * intentionally separate from MCP's one-shot query tools.
+     */
+    async queryChat(question, options = {}) {
+        if (!this.currentDataset) throw new Error('No dataset loaded');
+        if (this.isProcessing) throw new Error('Wait for data processing to finish before using Ask.');
+        const datasetRef = this.currentDataset;
+        const datasetId = this.currentDatasetId || datasetRef?.id || null;
+        const startedAt = Date.now();
+        const config = typeof window !== 'undefined' && window.ConfigManager
+            ? window.ConfigManager.getConfig()
+            : {};
+        const history = options.history || [];
+        const route = routeChatTurn(question, { history });
+        options.onRouteResolved?.(route);
+
+        if (route.resolved === 'helper') {
+            return {
+                answer: buildDocumentHelperReply(question, history),
+                sources: [],
+                citations: [],
+                route,
+                metadata: {
+                    generationProvider: 'router',
+                    retrievalPerformed: false,
+                    route,
+                    topicEligible: false,
+                    durationMs: Date.now() - startedAt,
+                    wasStopped: false,
+                    finishReason: 'stop'
+                }
+            };
+        }
+
+        if (!this.rag) throw new Error('Set up the local AI model before asking a substantive document question.');
+
+        const operationToken = this.rag.beginOperation('chat', { datasetId });
+        try {
+        const configuredMetadataFields = config.chat?.metadata_fields;
+        const scope = options.scope || 'all';
+        const numResults = options.numResults ?? config.search?.num_results ?? 5;
+        const retrievalK = options.retrievalK ?? config.search?.retrieval_k ?? null;
+        const vectorWeight = options.vectorWeight ?? config.search?.vector_weight;
+        const similarityThreshold = options.similarityThreshold ?? config.search?.similarity_threshold;
+        const configuredMetadataMode = ['off', 'selected', 'all'].includes(config.chat?.metadata_mode)
+            ? config.chat.metadata_mode
+            : (config.chat?.include_metadata === true
+                ? Array.isArray(configuredMetadataFields) && configuredMetadataFields.length ? 'selected' : 'all'
+                : 'off');
+        const metadataMode = ['off', 'selected', 'all'].includes(options.metadataMode)
+            ? options.metadataMode
+            : options.includeMetadata !== undefined
+                ? (options.includeMetadata ? (Array.isArray(options.metadataFields) ? 'selected' : 'all') : 'off')
+                : configuredMetadataMode;
+        const includeMetadata = metadataMode !== 'off';
+        const metadataFields = metadataMode === 'selected'
+            ? (options.metadataFields !== undefined ? options.metadataFields : (configuredMetadataFields || []))
+            : undefined;
+        const metadataFilters = options.metadataFilters || {};
+        const includePersistentFilters = options.includePersistentFilters === true;
+        const allowedDocIds = options.allowedDocIds ?? null;
+        const onRetrievalComplete = options.onRetrievalComplete || null;
+        const onChunk = options.onChunk || null;
+        const onStatus = options.onStatus || null;
+        const useHyDE = options.useHyDE ?? (config.ui_preferences?.hyde_enabled === true);
+        const memoryMode = options.memoryMode || config.chat?.memory_mode || 'adaptive';
+        const maxMemoryTurns = options.maxMemoryTurns ?? config.chat?.max_memory_turns ?? 8;
+        const temperature = options.temperature ?? config.llm?.temperature;
+        const topP = options.topP ?? config.llm?.top_p;
+        const repeatPenalty = options.repeatPenalty ?? config.llm?.repeat_penalty;
+        const maxOutputTokens = options.maxTokens ?? config.llm?.max_tokens ?? this.rag.maxTokens;
+        const contextWindow = options.contextWindow ?? config.llm?.context_window_size ?? this.rag.maxContextLength;
+        const systemPrompt = options.systemPrompt ?? config.rag_prompts?.system_prompt ?? this.rag.systemPrompt;
+        const userTemplate = options.userTemplate ?? config.rag_prompts?.user_template ?? this.rag.userTemplate;
+        const hydePrompt = options.hydePrompt ?? config.hyde?.prompt;
+        const hydeTemperature = options.hydeTemperature ?? config.hyde?.temperature;
+        const hydeMaxTokens = options.hydeMaxTokens ?? config.hyde?.max_tokens;
+        const effectiveSettings = {
+            configVersion: options.configVersion ?? config.version ?? null,
+            route: { requested: route.requested, resolved: route.resolved },
+            retrieval: { numResults, retrievalK, vectorWeight, similarityThreshold, useHyDE },
+            generation: { temperature, topP, repeatPenalty, maxOutputTokens, contextWindow },
+            memory: { mode: memoryMode, maxTurns: maxMemoryTurns },
+            evidence: { metadataMode, includeMetadata, metadataFields: metadataFields || [] }
+        };
+        let hydeUsed = false;
+        let filterScope = null;
+        let hydeProvenance = null;
+        const responseMetadata = (extra = {}) => ({
+            ...extra,
+            generationProvider: 'local-chat',
+            retrievalPerformed: route.resolved === 'documents',
+            route,
+            hydeUsed,
+            hydeEdited: Boolean(hydeProvenance?.edited),
+            hyde: hydeProvenance,
+            includeMetadata,
+            metadataMode,
+            metadataFields: metadataFields || [],
+            settings: effectiveSettings,
+            durationMs: Date.now() - startedAt,
+            filter: filterScope ? this.serializeMetadataFilterScope(filterScope) : null
+        });
+
+        onStatus?.(useHyDE ? 'hyde' : 'retrieving');
+
+        const streamState = { emitted: false };
+        const streamChunk = (chunk, fullText) => {
+            if (chunk) streamState.emitted = true;
+            onChunk?.(chunk, fullText);
+        };
+        const generatePlanned = async (buildPrompt, onPlanned = null) => {
+            return runChatGenerationWithRecovery({
+                buildPrompt,
+                onPlanned,
+                onStatus,
+                hasVisibleOutput: () => streamState.emitted,
+                diagnosticContext: () => ({
+                    phase: this.rag.activeOperation?.phase,
+                    retrievalCompleted: true,
+                    outputStreamed: streamState.emitted,
+                    model: this.rag.modelId
+                }),
+                generate: prompt => this.rag.generateFromMessages(prompt.messages, {
+                    maxTokens: prompt.telemetry.outputTokens,
+                    temperature,
+                    topP,
+                    repeatPenalty,
+                    onChunk: streamChunk,
+                    operationToken,
+                    owner: 'chat',
+                    datasetId,
+                    onStatus
+                }),
+                recoverEngine: async diagnostic => {
+                    console.warn('Recovering local AI before visible output:', diagnostic);
+                    await this.rag.recoverEngine(operationToken, onStatus);
+                }
+            });
+        };
+
+        filterScope = this.createMetadataFilterScope(metadataFilters, {
+            includePersistent: includePersistentFilters
+        });
+        let scopeDocIds = allowedDocIds;
+        if (scope === 'current' && scopeDocIds === null && typeof window !== 'undefined'
+            && typeof window.getCurrentRAGScope === 'function') {
+            const activeScope = window.getCurrentRAGScope('current');
+            scopeDocIds = activeScope?.scopeType === 'all' ? null : activeScope?.docIds;
+        }
+        const effectiveAllowedDocIds = this.combineAllowedDocIds(scopeDocIds, filterScope);
+        if (scope === 'current' && Array.isArray(effectiveAllowedDocIds) && effectiveAllowedDocIds.length === 0) {
+            return {
+                answer: 'No documents are available in the captured scope.',
+                sources: [],
+                citations: [],
+                route,
+                metadata: responseMetadata({ finishReason: 'stop' })
+            };
+        }
+        if (filterScope.applied && filterScope.matchedDocuments === 0) {
+            return {
+                answer: 'No documents match the selected scope.',
+                sources: [],
+                citations: [],
+                route,
+                metadata: responseMetadata()
+            };
+        }
+
+        let retrievalQueries = buildChatRetrievalQueries(question, history);
+        if (useHyDE) {
+            const hypothetical = await this.rag.generateHyDE(retrievalQueries.contextualSemanticQuery, {
+                prompt: hydePrompt,
+                temperature: hydeTemperature,
+                maxTokens: hydeMaxTokens,
+                operationToken,
+                owner: 'chat',
+                datasetId,
+                onStatus
+            });
+            this.rag.throwIfOperationCancelled(operationToken);
+            this.rag.setOperationPhase(operationToken, 'awaiting-input');
+            onStatus?.('awaiting-hyde');
+            const review = typeof options.onHyDEReview === 'function'
+                ? await options.onHyDEReview({
+                    question,
+                    contextualQuery: retrievalQueries.contextualSemanticQuery,
+                    generatedText: hypothetical
+                })
+                : { action: 'without_hyde' };
+            this.rag.throwIfOperationCancelled(operationToken);
+            const action = review?.action === 'use' ? 'use'
+                : review?.action === 'cancel' ? 'cancel' : 'without_hyde';
+            const approvedText = action === 'use' ? String(review?.text || '').trim() : '';
+            hydeProvenance = {
+                generated: hypothetical,
+                approved: approvedText || null,
+                edited: action === 'use' && approvedText !== String(hypothetical || '').trim(),
+                action,
+                contextualQuery: retrievalQueries.contextualSemanticQuery,
+                semanticQuery: action === 'use' && approvedText
+                    ? approvedText
+                    : retrievalQueries.contextualSemanticQuery,
+                keywordQuery: retrievalQueries.keywordQuery
+            };
+            if (action === 'cancel') {
+                onStatus?.('stopped');
+                return {
+                    answer: 'HyDE review cancelled.',
+                    sources: [],
+                    route,
+                    metadata: responseMetadata({ wasStopped: true, finishReason: 'abort' })
+                };
+            }
+            if (action === 'use' && approvedText) {
+                retrievalQueries = buildChatRetrievalQueries(question, history, approvedText);
+                hydeUsed = true;
+            }
+            this.rag.setOperationPhase(operationToken, 'retrieving');
+            onStatus?.('retrieving');
+        }
+        const questionEmbedding = await this.embeddings.embedSingle(retrievalQueries.semanticQuery, { mode: 'query' });
+        this.rag.throwIfOperationCancelled(operationToken);
+        if (this.currentDataset !== datasetRef || String(this.currentDatasetId || '') !== String(datasetId || '')) {
+            throw new Error('The active dataset changed while this chat turn was running.');
+        }
+        const retrieval = await this.rag.retrieveContext(question, questionEmbedding, {
+            numResults,
+            retrievalK,
+            vectorWeight,
+            includeMetadata,
+            metadataFields,
+            similarityThreshold,
+            allowedDocIds: effectiveAllowedDocIds,
+            keywordQuery: retrievalQueries.keywordQuery,
+            semanticQuery: retrievalQueries.semanticQuery,
+            signal: operationToken.abortController?.signal || null,
+            onRerankerProgress: options.onRerankerProgress,
+            onStatus
+        });
+        this.rag.throwIfOperationCancelled(operationToken);
+
+        if (!retrieval.sources.length) {
+            return {
+                answer: 'No relevant documents were found for this question.',
+                sources: [],
+                citations: [],
+                route,
+                metadata: responseMetadata({
+                    ...(retrieval.metadata || {}),
+                    topicEligible: false,
+                    resolvedQuery: retrievalQueries.resolvedQuery,
+                    topicAnchorQuestion: retrievalQueries.anchorQuestion
+                })
+            };
+        }
+
+        this.reranker.releaseForGeneration();
+        onStatus?.('generating');
+        const planned = await generatePlanned(additionalSafetyPercent => buildDocumentChatPrompt({
+            question,
+            history,
+            sources: retrieval.sources,
+            systemPrompt,
+            userTemplate,
+            contextWindow,
+            maxOutputTokens,
+            includeMetadata,
+            metadataFields,
+            maxSources: numResults,
+            memoryMode,
+            maxMemoryTurns,
+            additionalSafetyPercent
+        }), prompt => onRetrievalComplete?.(prompt.includedSources, prompt.telemetry));
+        if (this.currentDataset !== datasetRef || String(this.currentDatasetId || '') !== String(datasetId || '')) {
+            throw new Error('The active dataset changed while this chat turn was running.');
+        }
+        let answerResult = {
+            answer: planned.generated.answer,
+            sources: planned.prompt.includedSources,
+            route,
+            metadata: responseMetadata({
+                ...(retrieval.metadata || {}),
+                ...(planned.generated.metadata || {}),
+                ...planned.prompt.telemetry,
+                contextRetry: planned.contextRetry,
+                recoveryAttempts: planned.recoveryAttempts,
+                recoveryDiagnostics: planned.recoveryDiagnostics,
+                semanticQueryKind: hydeUsed ? 'hyde' : 'contextual',
+                semanticQuery: retrievalQueries.semanticQuery,
+                keywordQuery: retrievalQueries.keywordQuery,
+                retrievalAnchorUsed: retrievalQueries.anchorUsed,
+                retrievalAnchorQuestion: retrievalQueries.anchorQuestion,
+                resolvedQuery: retrievalQueries.resolvedQuery,
+                topicTurnId: retrievalQueries.topicTurnId
+            })
+        };
+        answerResult = applyCitationSafety(answerResult, planned.prompt.includedSources);
+        const topicEligible = !planned.generated.wasStopped;
+        answerResult.metadata.topicEligible = topicEligible;
+        answerResult.metadata.topicAnchorQuestion = topicEligible
+            ? retrievalQueries.resolvedQuery
+            : retrievalQueries.anchorQuestion;
+        onStatus?.(planned.generated.wasStopped ? 'stopped' : 'complete');
+        return answerResult;
+        } finally {
+            this.rag.endOperation(operationToken);
+        }
+    }
+
+    /** Retrieve RAG sources/context without requiring the local generation model. */
+    async retrieveRAGContext(question, options = {}) {
+        if (!this.currentDataset) throw new Error('No dataset loaded');
+        if (this.isProcessing) throw new Error('Wait for data processing to finish before retrieving document context.');
+        if (!this.rag) throw new Error('RAG retrieval is not initialized');
+
+        const metadataFilters = options.metadataFilters || {};
+        const filterScope = this.createMetadataFilterScope(metadataFilters, {
+            includePersistent: options.includePersistentFilters === true
+        });
+        const allowedDocIds = this.combineAllowedDocIds(options.allowedDocIds, filterScope);
+        if (filterScope.applied && filterScope.matchedDocuments === 0) {
+            return {
+                context: '',
+                contextPrompt: `No relevant documents found for: "${question}".`,
+                sources: [],
+                metadata: {
+                    generationProvider: 'none',
+                    filter: this.serializeMetadataFilterScope(filterScope)
+                }
+            };
+        }
+
+        const textToEmbed = options.hydeText || question;
+        const questionEmbedding = await this.embeddings.embedSingle(textToEmbed, { mode: 'query' });
+        const result = await this.rag.retrieveContext(question, questionEmbedding, {
+            ...options,
+            allowedDocIds
+        });
+        result.metadata = {
+            ...(result.metadata || {}),
+            filter: this.serializeMetadataFilterScope(filterScope)
+        };
+        return result;
     }
 
     /**
@@ -829,7 +1431,13 @@ export class BrowserMLPipeline {
      * Load dataset from storage
      */
     async loadDataset(datasetId) {
+        if (this.rag?.activeOperation) {
+            const active = this.rag.activeOperation;
+            throw new Error(`Cannot switch datasets while local AI is ${this.rag._operationLabel(active.owner)}. Stop or finish that task first.`);
+        }
         const data = await this.storage.loadDataset(datasetId);
+        if (typeof window !== 'undefined') window.clearActiveClusterLabels?.();
+        this.clearMcpMetadataFilters();
 
         // Restore cluster metadata if not already present
         if (data.clusters && data.documents) {
@@ -853,10 +1461,10 @@ export class BrowserMLPipeline {
         const resolvedEmbeddings = data.embeddings;
         const retrievalEmbeddings = Array.isArray(resolvedEmbeddings)
             ? resolvedEmbeddings
-            : resolvedEmbeddings?.retrieval;
+            : (resolvedEmbeddings?.parent ?? resolvedEmbeddings?.retrieval);
         const clusteringEmbeddings = Array.isArray(resolvedEmbeddings)
             ? resolvedEmbeddings
-            : (resolvedEmbeddings?.clustering ?? resolvedEmbeddings?.retrieval);
+            : (resolvedEmbeddings?.clustering ?? resolvedEmbeddings?.parent ?? resolvedEmbeddings?.retrieval);
 
         if (!retrievalEmbeddings) {
             throw new Error('Stored dataset is missing retrieval embeddings');
@@ -873,6 +1481,30 @@ export class BrowserMLPipeline {
 
         this.bm25Search.buildIndex(data.documents, docIds);
 
+        const storedChunks = Array.isArray(resolvedEmbeddings?.chunks) ? resolvedEmbeddings.chunks : [];
+        this.chunkToParentMap = resolvedEmbeddings?.chunkToParentMap || null;
+        if (storedChunks.length > 0) {
+            this.chunkVectorSearch = buildChunkIndex(storedChunks, BrowserVectorSearch);
+            this.chunkBM25Search = new BM25Search();
+            const chunkDocuments = storedChunks.map(chunk => ({
+                id: chunk.chunkId,
+                text: chunk.text,
+                metadata: {
+                    ...(chunk.metadata || {}),
+                    parent_id: chunk.docId,
+                    chunk_index: chunk.chunkIndex
+                }
+            }));
+            this.chunkBM25Search.buildIndex(chunkDocuments, chunkDocuments.map(chunk => chunk.id));
+        } else {
+            this.chunkVectorSearch = null;
+            this.chunkBM25Search = null;
+        }
+        if (this.rag) {
+            this.rag.setChunkVectorSearch(this.chunkVectorSearch);
+            this.rag.setBM25Search(this.chunkBM25Search || this.bm25Search);
+        }
+
         this.currentDataset = {
             id: datasetId,
             ...data.metadata,
@@ -888,9 +1520,16 @@ export class BrowserMLPipeline {
             numDocuments: data.documents.length,
             emptyRowCount: data.emptyRowCount || 0,
             duplicateCount: data.duplicateCount || 0,
-            clusterKeywords: data.clusterKeywords || null
+            clusterKeywords: data.clusterKeywords || null,
+            metadataSchema: data.metadataSchema || data.metadata?.metadataSchema || null
         };
         this.currentDatasetId = datasetId;
+
+        if (typeof document !== 'undefined') {
+            document.dispatchEvent(new CustomEvent('vectoria:dataset-changed', {
+                detail: { datasetId, reason: 'loaded' }
+            }));
+        }
 
         return this.currentDataset;
     }
@@ -933,20 +1572,60 @@ export class BrowserMLPipeline {
      * Clear current dataset
      */
     clearDataset() {
+        if (typeof window !== 'undefined') window.clearActiveClusterLabels?.();
+        this.clearMcpMetadataFilters();
         this.currentDataset = null;
         this.currentDatasetId = null;
         this.vectorSearch.clear();
+        this.chunkVectorSearch = null;
+        this.chunkBM25Search = null;
+        this.chunkToParentMap = null;
+        if (typeof document !== 'undefined') {
+            document.dispatchEvent(new CustomEvent('vectoria:dataset-changed', {
+                detail: { datasetId: null, reason: 'cleared' }
+            }));
+        }
     }
 
     /**
      * Abort the current RAG generation
      */
-    abortRAG() {
+    abortRAG(ownerOrOperation = null) {
         if (this.rag) {
-            this.rag.abort();
+            return this.rag.abort(ownerOrOperation);
         }
+        return false;
     }
 }
 
 // Export singleton instance
 export const pipeline = new BrowserMLPipeline();
+
+function fuseSearchResults(vectorResults, bm25Results, { k, vectorWeight }) {
+    const rrfK = 60;
+    const entries = new Map();
+    const add = (result, rank, type) => {
+        const key = String(result.doc_id ?? result.index);
+        const current = entries.get(key) || {
+            ...result,
+            vector_score: null,
+            bm25_score: null,
+            score: 0
+        };
+        const weight = type === 'vector' ? vectorWeight : (1 - vectorWeight);
+        current.score += weight / (rrfK + rank + 1);
+        if (type === 'vector') current.vector_score = result.score;
+        else current.bm25_score = result.score;
+        if (!current.text && result.text) current.text = result.text;
+        if ((!current.metadata || !Object.keys(current.metadata).length) && result.metadata) {
+            current.metadata = result.metadata;
+        }
+        entries.set(key, current);
+    };
+
+    vectorResults.forEach((result, rank) => add(result, rank, 'vector'));
+    bm25Results.forEach((result, rank) => add(result, rank, 'bm25'));
+    return [...entries.values()]
+        .sort((a, b) => b.score - a.score)
+        .slice(0, k);
+}

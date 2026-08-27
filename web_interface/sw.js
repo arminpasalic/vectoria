@@ -9,7 +9,7 @@
 // release. The SW uses it for the cache name (so old caches get evicted in the
 // activate handler) and appends it as a ?v= query string to every precached
 // URL (so a stale Vercel/CDN immutable copy is not served after a deploy).
-const BUILD_ID = '2026-07-15-97471b1';
+const BUILD_ID = '2026-08-27-b64b785';
 const CACHE_VERSION = `vectoria-${BUILD_ID}`;
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
@@ -23,22 +23,35 @@ const CACHEABLE_ASSET = /^\/static\/.*\.(js|css|woff2?|ttf|svg|ico)$/;
 
 // Assets to cache immediately on install
 const STATIC_ASSETS = [
-    '/',
-    '/index.html',
+    v('/'),
+    v('/index.html'),
     v('/static/css/main.css'),
     v('/static/css/browser-ml.css'),
+    v('/static/css/explore-workbench.css'),
     v('/static/js/viz.js'),
     v('/static/js/webgl-renderer.js'),
     v('/static/js/hyde-handler.js'),
     v('/static/js/fast-search.js'),
-    v('/static/js/search-enhancement.js'),
     v('/static/js/browser-capabilities.js'),
     v('/static/js/config-manager.js'),
     v('/static/js/model-constraints.js'),
+    v('/static/js/generation-mode-controller.js'),
+    v('/static/js/dom-safety.js'),
+    v('/static/js/workspace-state.js'),
+    v('/static/js/workspace-controller.js'),
+    v('/static/js/chat-interface.js'),
     v('/static/js/mcp-bridge-worker.js'),
     v('/static/js/export-import.js'),
     v('/static/js/vectoria.js'),
     v('/static/js/browser-ml/index.js'),
+    v('/static/js/browser-ml/chat-context.js'),
+    v('/static/js/browser-ml/chat-export.js'),
+    v('/static/js/browser-ml/retrieval-ranking.js'),
+    v('/static/js/browser-ml/reranker.js'),
+    v('/static/js/browser-ml/reranker-worker.js'),
+    v('/static/js/browser-ml/chat-store.js'),
+    v('/static/js/browser-ml/suggested-questions.js'),
+    v('/static/js/browser-ml/metadata-filters.js'),
     v('/static/js/browser-ml/embeddings.js'),
     v('/static/js/browser-ml/vector-search.js'),
     v('/static/js/browser-ml/llm-rag.js'),
@@ -102,6 +115,17 @@ self.addEventListener('fetch', (event) => {
     // Never cache the sample dataset: it's large (14MB) and a stale/broken
     // copy silently breaks the "Load sample" button. Always go to network.
     if (url.pathname.startsWith('/static/samples/')) {
+        return;
+    }
+
+    // App navigations are network-first so a newly activated worker cannot
+    // copy stale HTML from the previous worker into its fresh cache. The
+    // versioned precache remains available as the offline fallback.
+    if (request.mode === 'navigate') {
+        event.respondWith(
+            fetch(request, { cache: 'no-store' })
+                .catch(() => caches.match(v('/index.html')))
+        );
         return;
     }
 

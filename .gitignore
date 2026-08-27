@@ -1,29 +1,57 @@
-emsdk
+# Dependencies
+node_modules/
+
+# Vercel local project metadata and build output
+.vercel/
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local
+
+# Local HTTPS certificates
 server.key
 server.crt
-start-https.sh
-start-network.js
-LLM_CLEARANCE.md
-.claude
+*.pem
 
-# OS / editor cruft (recursive)
-.DS_Store
-**/.DS_Store
-*.swp
-.vscode/
-.idea/
-
-# Dependencies (root + nested MCP server)
-node_modules/
-**/node_modules/
-
-# NOTE: web_interface/static/mcp-server/ is the MCP installer's download
-# source, served as a static asset. Vercel ignores buildCommand when a
-# `builds` array is present, so `npm run build` does NOT run on deploy —
-# the generated files must be committed. Run `npm run build` after editing
-# anything under mcp-server/ and commit the result.
-
-# Vercel + logs
-.vercel
+# Logs and runtime files
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.pid
+*.pid.lock
+
+# Test and tool output
+coverage/
+.nyc_output/
+.cache/
+.eslintcache
+
+# Local SDK/toolchain installs
+emsdk/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors and local assistant settings
+.vscode/
+.idea/
+.claude/
+LLM_CLEARANCE.md
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Keep deployment manifests, lockfiles, source, and the generated
+# web_interface/static/mcp-server/ bundle committed. Vercel's `builds`
+# configuration does not run buildCommand, so that bundle is deploy input.

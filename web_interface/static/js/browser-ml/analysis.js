@@ -36,24 +36,35 @@ export class AnalysisService {
         return doc?.[field];
     }
 
-    _applyFilters(docs, filters) {
-        if (!filters || !Object.keys(filters).length) return docs;
-        const matcher = typeof window !== 'undefined' && typeof window.matchesFiltersFallback === 'function'
-            ? window.matchesFiltersFallback
-            : null;
-        if (!matcher) {
-            // Cheap fallback: exact-match on metadata
-            return docs.filter(d =>
-                Object.entries(filters).every(([k, v]) => String(d.metadata?.[k]) === String(v))
-            );
-        }
-        return docs.filter(d => matcher(d, filters));
+    _filterScope(filters, usePersistentFilters = false) {
+        return this.pipeline.createMetadataFilterScope(filters || {}, {
+            includePersistent: usePersistentFilters
+        });
+    }
+
+    _filterMetadata(scope) {
+        return this.pipeline.serializeMetadataFilterScope(scope);
     }
 
     // ---- summarize_cluster ------------------------------------------------
 
-    async summarizeCluster({ cluster_id, summarizer = 'external', n_exemplars, persist_label = true } = {}) {
+    async summarizeCluster({
+        cluster_id,
+        summarizer = 'external',
+        n_exemplars,
+        persist_label = true,
+        operationToken = null,
+        onStatus = null
+    } = {}) {
+        if (summarizer === 'local' && this.pipeline.isProcessing) {
+            throw new Error('Wait for data processing to finish before labelling clusters.');
+        }
+        if (summarizer === 'local' && typeof window !== 'undefined'
+            && window.__vectoriaGenerationMode === 'external') {
+            throw new Error('Local cluster labelling is disabled in AI client mode. Use summarizer="external" or enable the local browser model.');
+        }
         const ds = this._docs();
+        const datasetId = this.pipeline.currentDatasetId || ds.id || null;
         const cid = Number(cluster_id);
         const indices = [];
         for (let i = 0; i < ds.documents.length; i++) {
@@ -97,7 +108,15 @@ export class AnalysisService {
         };
 
         if (summarizer === 'local') {
-            const label = await this._localLabel(exemplars, keywords, cid);
+            const label = await this._localLabel(exemplars, keywords, cid, {
+                operationToken,
+                datasetId,
+                onStatus
+            });
+            if (this.pipeline.currentDataset !== ds
+                || String(this.pipeline.currentDatasetId || '') !== String(datasetId || '')) {
+                throw new Error('The active dataset changed while this cluster label was being generated.');
+            }
             result.label = label.label;
             result.summary = label.summary;
             if (persist_label && label.label) {
@@ -112,20 +131,24 @@ export class AnalysisService {
         return result;
     }
 
-    async _localLabel(exemplars, keywords, cid) {
+    async _localLabel(exemplars, keywords, cid, options = {}) {
         if (!this.pipeline.rag) {
-            return { label: '', summary: 'Local RAG not available' };
+            throw new Error('Local AI models are not set up. Download them before labelling clusters.');
         }
         const prompt = buildLocalPrompt(exemplars, keywords, cid);
         try {
             const text = await this.pipeline.rag.generateRaw(prompt, {
                 temperature: 0.4,
-                maxTokens: 180
+                maxTokens: 180,
+                owner: 'cluster-label',
+                operationToken: options.operationToken,
+                datasetId: options.datasetId,
+                onStatus: options.onStatus
             });
             return parseLabelResponse(text, cid);
         } catch (e) {
             console.warn('Local cluster summary failed:', e.message);
-            return { label: '', summary: `Local generation failed: ${e.message}` };
+            throw new Error(`Local cluster labelling failed: ${e.message}`);
         }
     }
 
@@ -156,10 +179,11 @@ export class AnalysisService {
 
     // ---- cross_tabulate ---------------------------------------------------
 
-    crossTabulate({ row_field, col_field, normalize = 'none', filter = null } = {}) {
+    crossTabulate({ row_field, col_field, normalize = 'none', filter = null, use_persistent_filters = false } = {}) {
         if (!row_field || !col_field) throw new Error('row_field and col_field required');
-        const ds = this._docs();
-        const docs = this._applyFilters(ds.documents, filter);
+        this._docs();
+        const scope = this._filterScope(filter, use_persistent_filters);
+        const docs = scope.documents;
 
         const rowVals = docs.map(d => this._readField(d, row_field));
         const colVals = docs.map(d => this._readField(d, col_field));
@@ -199,16 +223,18 @@ export class AnalysisService {
             chi_square: chi2,
             dof,
             p_value,
-            cramers_v: v
+            cramers_v: v,
+            filter_metadata: this._filterMetadata(scope)
         };
     }
 
     // ---- aggregate --------------------------------------------------------
 
-    aggregate({ group_by, metric = '__count__', agg = 'count', filter = null } = {}) {
+    aggregate({ group_by, metric = '__count__', agg = 'count', filter = null, use_persistent_filters = false } = {}) {
         if (!group_by) throw new Error('group_by required');
-        const ds = this._docs();
-        const docs = this._applyFilters(ds.documents, filter);
+        this._docs();
+        const scope = this._filterScope(filter, use_persistent_filters);
+        const docs = scope.documents;
 
         const groups = new Map();
         for (const doc of docs) {
@@ -236,7 +262,13 @@ export class AnalysisService {
             });
         }
         result.sort((a, b) => b.value - a.value);
-        return { group_by, metric, agg, groups: result };
+        return {
+            group_by,
+            metric,
+            agg,
+            groups: result,
+            filter_metadata: this._filterMetadata(scope)
+        };
     }
 
     // ---- compare_clusters -------------------------------------------------
@@ -300,26 +332,37 @@ export class AnalysisService {
 
     // ---- filter_to_subset -------------------------------------------------
 
-    filterToSubset({ filters = {}, name = null } = {}) {
-        const ds = this._docs();
-        const indices = [];
-        ds.documents.forEach((doc, i) => {
-            if (this._applyFilters([doc], filters).length) indices.push(i);
-        });
+    filterToSubset({ filters = {}, name = null, use_persistent_filters = false } = {}) {
+        this._docs();
+        const scope = this._filterScope(filters, use_persistent_filters);
+        const indices = scope.indices;
         const subset_id = `subset_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         if (!(this.pipeline.subsets instanceof Map)) this.pipeline.subsets = new Map();
         this.pipeline.subsets.set(subset_id, {
             name: name || subset_id,
             doc_indices: indices,
-            filters,
+            filters: scope.filters,
             created_at: Date.now()
         });
-        return { subset_id, name: name || subset_id, count: indices.length, doc_indices: indices };
+        return {
+            subset_id,
+            name: name || subset_id,
+            count: indices.length,
+            doc_indices: indices,
+            filter_metadata: this._filterMetadata(scope)
+        };
     }
 
     // ---- multi_vector_search ---------------------------------------------
 
-    async multiVectorSearch({ queries, k = 10, rrf_k = 60, fuse = 'rrf', metadata_filters = null } = {}) {
+    async multiVectorSearch({
+        queries,
+        k = 10,
+        rrf_k = 60,
+        fuse = 'rrf',
+        metadata_filters = null,
+        use_persistent_filters = false
+    } = {}) {
         if (!Array.isArray(queries) || !queries.length) {
             throw new Error('queries[] required');
         }
@@ -338,12 +381,16 @@ export class AnalysisService {
             }
         }
 
-        const matcher = typeof window !== 'undefined' && typeof window.matchesFiltersFallback === 'function'
-            ? window.matchesFiltersFallback
-            : null;
-        const filter = metadata_filters && matcher
-            ? (meta) => matcher({ metadata: meta }, metadata_filters)
-            : null;
+        const scope = this._filterScope(metadata_filters, use_persistent_filters);
+        const filter = scope.predicate;
+        if (scope.applied && scope.matchedDocuments === 0) {
+            return {
+                n_queries: vectors.length,
+                queries: vectors.map(v => v.label),
+                results: [],
+                filter_metadata: this._filterMetadata(scope)
+            };
+        }
 
         const fused = this.pipeline.vectorSearch.multiVectorSearch(vectors, {
             k,
@@ -356,7 +403,8 @@ export class AnalysisService {
         return {
             n_queries: vectors.length,
             queries: vectors.map(v => v.label),
-            ...fused
+            ...fused,
+            filter_metadata: this._filterMetadata(scope)
         };
     }
 }

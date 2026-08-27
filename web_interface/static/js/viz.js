@@ -1,6 +1,14 @@
 // Canvas Visualization for RAG-Vectoria Integration
 // Cleaned version with all contour code removed
 
+function escapeVisualizationHTML(value) {
+    return window.VectoriaDOM?.escapeHTML?.(value) ?? String(value ?? '');
+}
+
+function safeVisualizationColor(value) {
+    return window.VectoriaDOM?.safeColor?.(value, '#9CA3AF') ?? '#9CA3AF';
+}
+
 class CanvasVisualization {
     constructor(canvasId, tooltipId) {
         this.canvasId = canvasId;
@@ -18,6 +26,11 @@ class CanvasVisualization {
         this.offsetX = 0;
         this.offsetY = 0;
         this.zoomScale = 1;
+        this.activePointers = new Map();
+        this.pointerGesture = null;
+        this.pointerMoved = false;
+        this.pointerStartedAt = 0;
+        this.pointerStart = null;
 
         // Lasso selection state
         this.lassoMode = false;
@@ -33,6 +46,9 @@ class CanvasVisualization {
         this.highlightedPoint = null;
         this.hoveredPoint = null;
         this.highlightedDocs = null;
+        this.chatPreviewPoint = null;
+        this.chatPreviewDocs = null;
+        this.chatPreviewTimer = null;
         this.searchResults = null;
         this.searchResultsMap = null; // Pre-computed coordinate lookup for O(1) access
         this.metadataFilteredIndices = null; // For metadata filtering
@@ -311,15 +327,18 @@ class CanvasVisualization {
             toggleLabelsBtn.addEventListener('click', () => {
                 this.toggleLabels();
                 toggleLabelsBtn.classList.toggle('active', this.showLabels);
+                toggleLabelsBtn.setAttribute('aria-pressed', String(this.showLabels));
             });
             // Set initial state
             toggleLabelsBtn.classList.toggle('active', this.showLabels);
+            toggleLabelsBtn.setAttribute('aria-pressed', String(this.showLabels));
         }
 
         if (lassoSelectBtn) {
             lassoSelectBtn.addEventListener('click', () => {
                 this.toggleLassoMode();
                 lassoSelectBtn.classList.toggle('active', this.lassoMode);
+                lassoSelectBtn.setAttribute('aria-pressed', String(this.lassoMode));
             });
         }
 
@@ -329,13 +348,27 @@ class CanvasVisualization {
 
         if (toggleOutliersBtn) {
             this.outliersHidden = false;
+            toggleOutliersBtn.setAttribute('aria-pressed', 'false');
             toggleOutliersBtn.addEventListener('click', () => {
                 this.outliersHidden = !this.outliersHidden;
                 toggleOutliersBtn.classList.toggle('active', this.outliersHidden);
+                toggleOutliersBtn.setAttribute('aria-pressed', String(this.outliersHidden));
                 toggleOutliersBtn.setAttribute('data-label', this.outliersHidden ? 'Show outliers' : 'Hide outliers');
+                toggleOutliersBtn.setAttribute('aria-label', this.outliersHidden ? 'Show outliers' : 'Hide outliers');
                 // Update WebGL renderer if available (EnhancedCanvasVisualization)
                 if (this.webglRenderer && typeof this.webglRenderer.setOutliersHidden === 'function') {
                     this.webglRenderer.setOutliersHidden(this.outliersHidden);
+                }
+                if (this.outliersHidden) {
+                    if (this.hoveredPoint && !this.isPointVisible(this.hoveredPoint)) {
+                        this.hoveredPoint = null;
+                        this.hideTooltip();
+                    }
+                    if (typeof this.highlightedPoint === 'number'
+                        && !this.isPointVisible(this.data?.[this.highlightedPoint])) {
+                        this.highlightedPoint = null;
+                        this.selectionPulse = null;
+                    }
                 }
                 // Always request a re-render for Canvas2D fallback path
                 this.requestRender();
@@ -442,6 +475,11 @@ class CanvasVisualization {
 
     toggleLassoMode() {
         this.lassoMode = !this.lassoMode;
+        const lassoButton = document.getElementById('lasso-select-btn');
+        if (lassoButton) {
+            lassoButton.classList.toggle('active', this.lassoMode);
+            lassoButton.setAttribute('aria-pressed', String(this.lassoMode));
+        }
 
         if (this.lassoMode) {
             this.canvas.style.cursor = 'crosshair';
@@ -449,6 +487,12 @@ class CanvasVisualization {
             this.canvas.style.cursor = 'grab';
             this.clearLassoSelection();
         }
+    }
+
+    cancelActiveTool() {
+        if (!this.lassoMode) return false;
+        this.toggleLassoMode();
+        return true;
     }
 
     clearLassoSelection() {
@@ -573,6 +617,7 @@ class CanvasVisualization {
         // Test each point to see if it's inside the lasso polygon
         for (let i = 0; i < this.data.length; i++) {
             const point = this.data[i];
+            if (!this.isPointVisible(point)) continue;
 
             // Convert world coordinates to screen coordinates
             const screenX = point.x * this.zoomScale + this.offsetX;
@@ -769,10 +814,10 @@ class CanvasVisualization {
     }
 
     setupEventListeners() {
-        this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
-        this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
-        this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
-        this.canvas.addEventListener('mouseleave', (e) => this.handleMouseLeave(e));
+        this.canvas.addEventListener('pointerdown', (e) => this.handlePointerDown(e));
+        this.canvas.addEventListener('pointermove', (e) => this.handlePointerMove(e));
+        this.canvas.addEventListener('pointerup', (e) => this.handlePointerUp(e));
+        this.canvas.addEventListener('pointercancel', (e) => this.handlePointerCancel(e));
 
         // Critical: Attach wheel event with passive:false to enable preventDefault
         const wheelHandler = (e) => this.handleWheel(e);
@@ -785,8 +830,6 @@ class CanvasVisualization {
             // Set explicit style to ensure it captures pointer events
             container.style.touchAction = 'none';
         }
-
-        this.canvas.addEventListener('click', (e) => this.handleClick(e));
 
         // Debounced resize handler
         this.resizeTimeout = null;
@@ -803,16 +846,6 @@ class CanvasVisualization {
         document.addEventListener('webkitfullscreenchange', () => this.updateFullscreenState());
         document.addEventListener('mozfullscreenchange', () => this.updateFullscreenState());
 
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
-            // Escape key cancels lasso mode
-            if (e.key === 'Escape' && this.lassoMode) {
-                e.preventDefault();
-                this.toggleLassoMode();
-                const lassoBtn = document.getElementById('lasso-select-btn');
-                if (lassoBtn) lassoBtn.classList.remove('active');
-            }
-        });
     }
 
     resizeCanvas() {
@@ -832,18 +865,24 @@ class CanvasVisualization {
         const rect = container.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return;
 
-        // Store current view state for coordinate preservation
-        const oldWidth = this.canvas.width / this.dpr;
-        const oldHeight = this.canvas.height / this.dpr;
+        // Store current view state for coordinate preservation before DPR changes.
+        const oldDpr = this.dpr || 1;
+        const oldWidth = this.canvas.width / oldDpr;
+        const oldHeight = this.canvas.height / oldDpr;
         const currentZoom = this.zoomScale;
         const currentOffsetX = this.offsetX;
         const currentOffsetY = this.offsetY;
 
         const cssWidth = rect.width;
         const cssHeight = rect.height;
+        const nextDpr = window.devicePixelRatio || 1;
+        const targetWidth = Math.round(cssWidth * nextDpr);
+        const targetHeight = Math.round(cssHeight * nextDpr);
+        if (this.canvas.width === targetWidth && this.canvas.height === targetHeight && this.dpr === nextDpr) return;
+        this.dpr = nextDpr;
 
-        this.canvas.width = cssWidth * this.dpr;
-        this.canvas.height = cssHeight * this.dpr;
+        this.canvas.width = targetWidth;
+        this.canvas.height = targetHeight;
         if (this.isFullscreen) {
             this.canvas.style.width = `${cssWidth}px`;
             this.canvas.style.height = `${cssHeight}px`;
@@ -864,6 +903,7 @@ class CanvasVisualization {
             if (this.gl) {
                 this.gl.viewport(0, 0, this.glCanvas.width, this.glCanvas.height);
             }
+            this.webglRenderer?.resize?.(cssWidth, cssHeight);
         }
 
         // Invalidate cached gradient on resize
@@ -878,6 +918,84 @@ class CanvasVisualization {
             this.offsetY = cssHeight / 2 - worldCenterY * currentZoom;
             this.zoomScale = currentZoom;
         }
+    }
+
+    pointerPosition(event) {
+        const rect = this.canvas.getBoundingClientRect();
+        return { clientX: event.clientX, clientY: event.clientY, x: event.clientX - rect.left, y: event.clientY - rect.top };
+    }
+
+    handlePointerDown(event) {
+        if (event.button !== undefined && event.button !== 0) return;
+        this.canvas.setPointerCapture?.(event.pointerId);
+        const point = this.pointerPosition(event);
+        this.activePointers.set(event.pointerId, point);
+        if (this.lassoMode || this.activePointers.size === 1) {
+            this.pointerMoved = false;
+            this.pointerStartedAt = performance.now();
+            this.pointerStart = point;
+            this.handleMouseDown(event);
+        }
+        if (!this.lassoMode && this.activePointers.size === 2) {
+            this.isDragging = false;
+            const [first, second] = [...this.activePointers.values()];
+            const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+            this.pointerGesture = {
+                distance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
+                zoom: this.zoomScale,
+                worldX: (midpoint.x - this.offsetX) / this.zoomScale,
+                worldY: (midpoint.y - this.offsetY) / this.zoomScale
+            };
+        }
+        event.preventDefault();
+    }
+
+    handlePointerMove(event) {
+        if (!this.activePointers.has(event.pointerId)) {
+            if (event.pointerType === 'mouse') this.handleMouseMove(event);
+            return;
+        }
+        const previous = this.activePointers.get(event.pointerId);
+        const point = this.pointerPosition(event);
+        this.activePointers.set(event.pointerId, point);
+        if (this.pointerStart && Math.hypot(point.x - this.pointerStart.x, point.y - this.pointerStart.y) > 8) this.pointerMoved = true;
+
+        if (!this.lassoMode && this.activePointers.size === 2 && this.pointerGesture) {
+            const [first, second] = [...this.activePointers.values()];
+            const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+            const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
+            const zoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.pointerGesture.zoom * (distance / this.pointerGesture.distance)));
+            this.zoomScale = zoom;
+            this.offsetX = midpoint.x - this.pointerGesture.worldX * zoom;
+            this.offsetY = midpoint.y - this.pointerGesture.worldY * zoom;
+            this.shouldRenderLabels = false;
+            this.performRender();
+        } else if (this.activePointers.size === 1) {
+            this.handleMouseMove(event);
+        }
+        event.preventDefault();
+    }
+
+    handlePointerUp(event) {
+        const wasPinching = Boolean(this.pointerGesture);
+        this.activePointers.delete(event.pointerId);
+        this.canvas.releasePointerCapture?.(event.pointerId);
+        if (wasPinching) {
+            if (this.activePointers.size < 2) this.pointerGesture = null;
+            this.isDragging = false;
+            this.shouldRenderLabels = true;
+            this.requestRender();
+        } else {
+            this.handleMouseUp(event);
+            if (!this.pointerMoved && performance.now() - this.pointerStartedAt < 500) this.handleClick(event);
+        }
+        event.preventDefault();
+    }
+
+    handlePointerCancel(event) {
+        this.activePointers.delete(event.pointerId);
+        this.pointerGesture = null;
+        this.handleMouseLeave(event);
     }
 
     handleMouseDown(e) {
@@ -1129,6 +1247,10 @@ class CanvasVisualization {
         }
     }
 
+    isPointVisible(point) {
+        return Boolean(point) && !(this.outliersHidden && point.cluster === -1);
+    }
+
     findPointUnderMouse(mouseX, mouseY) {
         if (!this.data || this.data.length === 0) return null;
 
@@ -1154,6 +1276,7 @@ class CanvasVisualization {
                     for (let k = 0; k < bucket.length; k++) {
                         const idx = bucket[k];
                         const p = this.data[idx];
+                        if (!this.isPointVisible(p)) continue;
                         const dx = p.x - worldX;
                         const dy = p.y - worldY;
                         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -1172,6 +1295,7 @@ class CanvasVisualization {
         let minDistance = threshold;
         for (let i = this.data.length - 1; i >= 0; i--) {
             const point = this.data[i];
+            if (!this.isPointVisible(point)) continue;
             const dx = point.x - worldX;
             const dy = point.y - worldY;
             const distance = Math.sqrt(dx * dx + dy * dy);
@@ -1184,51 +1308,70 @@ class CanvasVisualization {
     }
 
     showTooltip(point, clientX, clientY) {
-        if (!this.tooltip) return;
+        if (!this.tooltip || !this.isPointVisible(point)) return;
+        if (document.body?.classList?.contains('modal-open') || document.body?.classList?.contains('ml-modal-open')) {
+            this.hideTooltip();
+            return;
+        }
 
         // Ensure tooltip is visible (especially important in fullscreen)
         this.tooltip.style.display = 'block';
         this.tooltip.style.position = 'fixed';
-        this.tooltip.style.zIndex = '10001';
+        this.tooltip.style.zIndex = '';
 
-        const clusterColor = point.cluster_color || this.getClusterColor(point.cluster, point.cluster_name);
-        const clusterName = this.getClusterName(point.cluster);
+        const clusterColor = safeVisualizationColor(point.cluster_color || this.getClusterColor(point.cluster, point.cluster_name));
+        const clusterName = escapeVisualizationHTML(this.getClusterName(point.cluster));
 
         // Adjust text length based on viewport size
         const maxTextLength = window.innerWidth < 768 ? 120 : 200;
 
-        const darkMode = document.documentElement && document.documentElement.classList.contains('dark');
-        const titleColor = darkMode ? '#F5F6FA' : '#1a1a1a';
-        const textColor = darkMode ? '#E3E7F0' : '#4a4a4a';
-        const detailColor = darkMode ? '#B5BED1' : '#666';
-        const keywordColor = darkMode ? '#9AA6C2' : '#888';
-        const barBackground = darkMode ? 'rgba(255,255,255,0.15)' : '#e0e0e0';
-
-        let content = `<div class="tooltip-content" style="border-left: 3px solid ${clusterColor}; padding-left: 14px; padding-right: 4px; font-family: 'Neue Montreal', 'Helvetica Neue', Arial, sans-serif; color: ${textColor};">`;
-        content += `<div class="tooltip-title" style="font-size: 15px; font-weight: 700; margin-bottom: 6px; color: ${titleColor}; letter-spacing: -0.01em;">Item ${point.index + 1}</div>`;
-        content += `<div class="tooltip-cluster" style="display: inline-block; background: ${clusterColor}; color: white; padding: 3px 8px; border-radius: 4px; font-weight: 600; font-size: 12px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">${clusterName}</div>`;
+        let content = `<div class="tooltip-content" style="--cluster-color: ${clusterColor};">`;
+        const itemNumber = Number.isInteger(point.index) ? point.index + 1 : '—';
+        content += `<div class="tooltip-title">Item ${itemNumber}</div>`;
+        content += `<div class="tooltip-cluster">${clusterName}</div>`;
 
         if (point.text) {
-            const text = point.text.length > maxTextLength ? point.text.substring(0, maxTextLength) + '...' : point.text;
-            content += `<div class="tooltip-text" style="margin-top: 10px; font-size: 13px; line-height: 1.5; color: ${textColor}; word-wrap: break-word; overflow-wrap: break-word; font-weight: 400;">${text}</div>`;
+            const pointText = String(point.text);
+            const text = pointText.length > maxTextLength ? pointText.substring(0, maxTextLength) + '...' : pointText;
+            content += `<div class="tooltip-text">${escapeVisualizationHTML(text)}</div>`;
+        }
+
+        // Prioritized metadata, using the order the user arranged in the text
+        // detail panel. Fewer fields on narrow viewports so the tooltip still fits.
+        // Opt-out lives in Settings → General → Appearance; default on when unset.
+        const hoverMetadataEnabled = window.ConfigManager
+            ?.getConfig?.()?.ui_preferences?.hover_metadata !== false;
+        const metadataLimit = Number(window.innerWidth) < 768 ? 3 : 4;
+        const metadataEntries = hoverMetadataEnabled
+            ? (window.getMetadataPreviewEntries?.(point, metadataLimit) ?? [])
+            : [];
+        if (metadataEntries.length) {
+            const rows = metadataEntries.map(entry => `
+                <div class="tooltip-metadata-row">
+                    <span class="tooltip-metadata-key">${escapeVisualizationHTML(entry.label)}</span>
+                    <span class="tooltip-metadata-value">${entry.previewValue}</span>
+                </div>
+            `).join('');
+            content += `<div class="tooltip-metadata">${rows}</div>`;
         }
 
         // Show CTFIDF keywords if available
         const keywords = this.clusterKeywords && this.clusterKeywords.get(point.cluster);
         if (keywords && keywords.length > 0) {
             const topKeywords = keywords.slice(0, 10);
-            const keywordText = topKeywords.join(', ');
-            content += `<div class="tooltip-keywords" style="margin-top: 10px; font-size: 11px; color: ${keywordColor}; font-style: italic; font-weight: 400;">Top keywords: ${keywordText}</div>`;
+            const keywordText = escapeVisualizationHTML(topKeywords.join(', '));
+            content += `<div class="tooltip-keywords">Top keywords: ${keywordText}</div>`;
         }
 
         // Only show confidence for non-outlier points (cluster !== -1)
         if (typeof point.cluster_probability === 'number' && point.cluster !== -1) {
-            const percent = Math.trunc(point.cluster_probability * 10000) / 100;
-            content += `<div class="tooltip-confidence" style="margin-top: 10px; font-size: 12px; color: ${detailColor}; font-weight: 400;">
-                <span style="display: inline-block; width: 100px; height: 6px; background: ${barBackground}; border-radius: 3px; overflow: hidden; vertical-align: middle; margin-right: 6px;">
-                    <span style="display: block; width: ${percent}%; height: 100%; background: ${clusterColor}; border-radius: 3px;"></span>
+            const probability = Number.isFinite(point.cluster_probability) ? point.cluster_probability : 0;
+            const percent = Math.min(100, Math.max(0, Math.trunc(probability * 10000) / 100));
+            content += `<div class="tooltip-confidence">
+                <span class="tooltip-confidence-track">
+                    <span class="tooltip-confidence-fill" style="width: ${percent}%;"></span>
                 </span>
-                <span style="font-weight: 600; color: ${titleColor};">${percent.toFixed(1)}%</span> confidence
+                <span class="tooltip-confidence-value">${percent.toFixed(1)}%</span> confidence
             </div>`;
         }
 
@@ -1745,7 +1888,7 @@ class CanvasVisualization {
         }
 
         const { start, duration, repeats, index } = this.selectionPulse;
-        if (this.highlightedPoint !== index) {
+        if (this.highlightedPoint !== index && this.chatPreviewPoint !== index) {
             this.selectionPulse = null;
             return false;
         }
@@ -1769,7 +1912,7 @@ class CanvasVisualization {
     }
 
     showTooltipAtPoint(point) {
-        if (!this.tooltip || !point) return;
+        if (!this.tooltip || !point || !this.isPointVisible(point)) return;
         const { x, y } = this.worldToScreen(point.x, point.y);
         const rect = this.canvas.getBoundingClientRect();
         this.showTooltip(point, rect.left + x, rect.top + y);
@@ -1790,6 +1933,7 @@ class CanvasVisualization {
         }
 
         const point = this.data[index];
+        if (!this.isPointVisible(point)) return;
         const {
             focus = false,
             zoom = null,
@@ -1847,6 +1991,36 @@ class CanvasVisualization {
 
     highlightDocuments(docIds) {
         this.highlightedDocs = new Set(docIds);
+        this.requestRender();
+    }
+
+    previewChatPoint(index) {
+        if (!this.data || typeof index !== 'number' || !this.isPointVisible(this.data[index])) return false;
+        this.chatPreviewPoint = index;
+        this.startSelectionPulse(index);
+        this.cancelDeferredTooltip();
+        this.hideTooltip();
+        this.requestRender();
+        return true;
+    }
+
+    pulseChatDocuments(docIds, duration = 1600) {
+        if (this.chatPreviewTimer) clearTimeout(this.chatPreviewTimer);
+        this.chatPreviewPoint = null;
+        this.chatPreviewDocs = new Set((docIds || []).map(String));
+        this.chatPreviewTimer = setTimeout(() => this.clearChatPreview(), Math.max(300, duration));
+        this.requestRender();
+    }
+
+    clearChatPreview() {
+        if (this.chatPreviewTimer) clearTimeout(this.chatPreviewTimer);
+        this.chatPreviewTimer = null;
+        const previewIndex = this.chatPreviewPoint;
+        this.chatPreviewPoint = null;
+        this.chatPreviewDocs = null;
+        if (this.selectionPulse?.index === previewIndex) this.selectionPulse = null;
+        this.cancelDeferredTooltip();
+        this.hideTooltip();
         this.requestRender();
     }
 
@@ -1954,9 +2128,11 @@ class CanvasVisualization {
         }
 
         const pointIndex = typeof point.index === 'number' ? point.index : index;
-        const hasSelection = typeof this.highlightedPoint === 'number';
-        const isHighlighted = hasSelection && this.highlightedPoint === pointIndex;
-        const isHovered = this.hoveredPoint && this.hoveredPoint.index === pointIndex;
+        const hasChatPreview = typeof this.chatPreviewPoint === 'number';
+        const focusedPoint = hasChatPreview ? this.chatPreviewPoint : this.highlightedPoint;
+        const hasSelection = typeof focusedPoint === 'number';
+        const isHighlighted = hasSelection && focusedPoint === pointIndex;
+        const isHovered = !hasChatPreview && this.hoveredPoint && this.hoveredPoint.index === pointIndex;
 
         const hasMetadataFilters = this.metadataFilteredIndices !== null;
         let isMetadataFiltered = true;
@@ -2011,6 +2187,10 @@ class CanvasVisualization {
         const pointIndex = typeof point.index === 'number' ? point.index : index;
 
         if (typeof this.highlightedPoint === 'number' && this.highlightedPoint === pointIndex) {
+            return true;
+        }
+
+        if (typeof this.chatPreviewPoint === 'number' && this.chatPreviewPoint === pointIndex) {
             return true;
         }
 
@@ -2166,6 +2346,7 @@ class CanvasVisualization {
 
     drawPoint(point) {
         if (typeof point.x !== 'number' || typeof point.y !== 'number') return;
+        if (!this.isPointVisible(point)) return;
 
         const screenX = point.x * this.zoomScale + this.offsetX;
         const screenY = point.y * this.zoomScale + this.offsetY;
@@ -2177,10 +2358,14 @@ class CanvasVisualization {
             return;
         }
 
-        const hasSelection = typeof this.highlightedPoint === 'number';
-        const isHighlighted = hasSelection && this.highlightedPoint === point.index;
-        const isHovered = this.hoveredPoint && this.hoveredPoint.index === point.index;
-        const isSearchHighlighted = this.highlightedDocs && this.highlightedDocs.has(point.doc_id);
+        const hasChatPreview = typeof this.chatPreviewPoint === 'number';
+        const focusedPoint = hasChatPreview ? this.chatPreviewPoint : this.highlightedPoint;
+        const hasSelection = typeof focusedPoint === 'number';
+        const isHighlighted = hasSelection && focusedPoint === point.index;
+        const isHovered = !hasChatPreview && this.hoveredPoint && this.hoveredPoint.index === point.index;
+        const isChatPreview = this.chatPreviewPoint === point.index
+            || (this.chatPreviewDocs && this.chatPreviewDocs.has(String(point.doc_id)));
+        const isSearchHighlighted = (this.highlightedDocs && this.highlightedDocs.has(point.doc_id)) || isChatPreview;
 
         let searchResult = null;
         let isSearchResult = false;
@@ -2204,11 +2389,6 @@ class CanvasVisualization {
         const hasMetadataFilters = this.metadataFilteredIndices !== null;
 
         const isOutlierCluster = point.cluster === -1;
-
-        // Skip rendering outliers entirely when hidden
-        if (isOutlierCluster && this.outliersHidden) {
-            return;
-        }
 
         const baseColor = point.color || point.cluster_color || this.getClusterColor(point.cluster, point.cluster_name);
         let color = isOutlierCluster ? this.outlierColor : baseColor;
@@ -2305,6 +2485,16 @@ class CanvasVisualization {
         this.ctx.shadowOffsetY = 0;
         this.ctx.globalAlpha = opacity;
 
+        if (!shouldDim) {
+            this.ctx.lineWidth = 0.85;
+            this.ctx.strokeStyle = darkMode
+                ? 'rgba(255, 255, 255, 0.34)'
+                : 'rgba(30, 30, 30, 0.48)';
+            this.ctx.beginPath();
+            this.ctx.arc(screenX, screenY, radius + 0.25, 0, Math.PI * 2);
+            this.ctx.stroke();
+        }
+
         if (accentColor && !shouldDim) {
             const accentAlpha = isHighlighted
                 ? 0.9
@@ -2324,7 +2514,7 @@ class CanvasVisualization {
             this.ctx.stroke();
         }
 
-        if (isHighlighted && this.selectionPulse && this.selectionPulse.index === point.index) {
+        if ((isHighlighted || isChatPreview) && this.selectionPulse && this.selectionPulse.index === point.index) {
             const pulseProgress = this.selectionPulse.progress || 0;
             const eased = 1 - Math.pow(1 - pulseProgress, 3);
             const pulseRadius = radius + 6 + eased * 9;
@@ -2630,20 +2820,27 @@ class CanvasVisualization {
             const topicLabel = this.clusterTopicLabels && this.clusterTopicLabels.get(clusterId);
             // Use getClusterName to support custom cluster names
             const clusterLabel = this.getClusterName(clusterId);
-            const normalizedTopic = typeof topicLabel === 'string' ? topicLabel.trim() : '';
-            // Only show topic separately if it differs from the cluster label
-            const hasDistinctTopic = normalizedTopic &&
-                normalizedTopic.toLowerCase() !== clusterLabel.toLowerCase() &&
-                !clusterLabel.toLowerCase().includes(normalizedTopic.toLowerCase());
-            const baseLabel = hasDistinctTopic
-                ? `${clusterLabel} • ${normalizedTopic}`
-                : clusterLabel;
-            const keywordsSource = (this.clusterKeywordsViz && this.clusterKeywordsViz.get(clusterId))
-                || (this.clusterKeywords && this.clusterKeywords.get(clusterId));
-            const keywordPreview = Array.isArray(keywordsSource) && keywordsSource.length > 0
-                ? keywordsSource.slice(0, 3).join(', ')
-                : null;
-            const labelText = keywordPreview ? `${baseLabel}: ${keywordPreview}` : baseLabel;
+            const hasCustomLabel = typeof customClusterNames !== 'undefined'
+                && customClusterNames.has(clusterId);
+            let labelText = clusterLabel;
+
+            // A manual or AI-generated label is the final visualization title.
+            // Only unlabeled clusters need the generated topic/keyword fallback.
+            if (!hasCustomLabel) {
+                const normalizedTopic = typeof topicLabel === 'string' ? topicLabel.trim() : '';
+                const hasDistinctTopic = normalizedTopic &&
+                    normalizedTopic.toLowerCase() !== clusterLabel.toLowerCase() &&
+                    !clusterLabel.toLowerCase().includes(normalizedTopic.toLowerCase());
+                const baseLabel = hasDistinctTopic
+                    ? `${clusterLabel} • ${normalizedTopic}`
+                    : clusterLabel;
+                const keywordsSource = (this.clusterKeywordsViz && this.clusterKeywordsViz.get(clusterId))
+                    || (this.clusterKeywords && this.clusterKeywords.get(clusterId));
+                const keywordPreview = Array.isArray(keywordsSource) && keywordsSource.length > 0
+                    ? keywordsSource.slice(0, 3).join(', ')
+                    : null;
+                labelText = keywordPreview ? `${baseLabel}: ${keywordPreview}` : baseLabel;
+            }
             const clusterColor = this.getClusterColor(clusterId, topicLabel);
 
             visibleLabels.push({ clusterId, labelText, screenX, screenY, clusterColor });
@@ -2884,12 +3081,16 @@ class CanvasVisualization {
             this.resizeTimeout = null;
         }
         this.cancelDeferredTooltip();
+        if (this.chatPreviewTimer) clearTimeout(this.chatPreviewTimer);
         this.selectionPulse = null;
 
         this.data = [];
         this.highlightedPoint = null;
         this.hoveredPoint = null;
         this.highlightedDocs = null;
+        this.chatPreviewPoint = null;
+        this.chatPreviewDocs = null;
+        this.chatPreviewTimer = null;
         this.searchResults = null;
         this.searchResultsMap = null;
 

@@ -109,6 +109,8 @@ export class DataExporter {
         if (!jsonData.metadata || !jsonData.documents || !jsonData.embeddings) {
             throw new Error('Invalid Vectoria export format - missing required fields');
         }
+        if (typeof window !== 'undefined') window.clearActiveClusterLabels?.();
+        this.pipeline.clearMcpMetadataFilters?.();
 
         // 2. Restore documents
         const documents = jsonData.documents.map(doc => ({

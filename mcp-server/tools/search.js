@@ -9,7 +9,7 @@ export function registerSearchTools(server, bridge) {
       search_type:      z.enum(['fast', 'semantic']).default('fast').describe('fast = BM25 keyword, semantic = vector similarity'),
       k:                z.number().int().default(10).describe('Number of results'),
       include_metadata: z.boolean().default(true),
-      metadata_filters: z.record(z.any()).optional().describe('e.g. {"category": "news"}')
+      metadata_filters: z.record(z.any()).optional().describe('Per-call filters, e.g. {"category": "news"}; override matching persistent filter fields')
     },
     async (params) => {
       const result = await bridge.call('POST /search', {
@@ -17,9 +17,13 @@ export function registerSearchTools(server, bridge) {
         search_type: params.search_type ?? 'fast',
         k: params.k ?? 10,
         include_metadata: params.include_metadata ?? true,
-        metadata_filters: params.metadata_filters ?? {}
+        metadata_filters: params.metadata_filters ?? {},
+        use_persistent_filters: true
       }, 15000);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        ...(result?.error ? { isError: true } : {})
+      };
     }
   );
 
@@ -31,7 +35,7 @@ export function registerSearchTools(server, bridge) {
       k:                z.number().int().default(10),
       vector_weight:    z.number().min(0).max(1).default(0.6).describe('Weight for vector search (0-1). Remainder goes to BM25.'),
       include_metadata: z.boolean().default(true),
-      metadata_filters: z.record(z.any()).optional()
+      metadata_filters: z.record(z.any()).optional().describe('Per-call filters that override matching persistent filter fields')
     },
     async (params) => {
       const result = await bridge.call('POST /search', {
@@ -40,9 +44,13 @@ export function registerSearchTools(server, bridge) {
         k: params.k ?? 10,
         vector_weight: params.vector_weight ?? 0.6,
         include_metadata: params.include_metadata ?? true,
-        metadata_filters: params.metadata_filters ?? {}
+        metadata_filters: params.metadata_filters ?? {},
+        use_persistent_filters: true
       }, 15000);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        ...(result?.error ? { isError: true } : {})
+      };
     }
   );
 

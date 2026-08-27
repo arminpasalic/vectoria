@@ -4,6 +4,10 @@
  * Shows warnings for unsupported browsers
  */
 
+function escapeCapabilityHTML(value) {
+    return window.VectoriaDOM?.escapeHTML?.(value) ?? String(value ?? '');
+}
+
 const BrowserCapabilities = {
     // Capability results cache
     _cache: null,
@@ -347,15 +351,15 @@ function showCapabilityWarning(capabilities) {
                   '<i class="fas fa-info-circle"></i>'}
             </div>
             <div class="capability-message">
-                <strong>${mainIssue.title}</strong>
-                <span>${mainIssue.message}</span>
+                <strong>${escapeCapabilityHTML(mainIssue.title)}</strong>
+                <span>${escapeCapabilityHTML(mainIssue.message)}</span>
                 ${otherCount > 0 ? `<span class="capability-more">+${otherCount} more issue${otherCount > 1 ? 's' : ''}</span>` : ''}
             </div>
             <div class="capability-actions">
                 <button class="btn btn-sm capability-details-btn" onclick="showCapabilityDetails()">
                     Details
                 </button>
-                <button class="btn btn-sm btn-icon capability-dismiss" onclick="dismissCapabilityWarning()">
+                <button class="btn btn-sm btn-icon capability-dismiss" onclick="dismissCapabilityWarning()" aria-label="Dismiss browser capability warning">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
@@ -382,14 +386,18 @@ function showCapabilityDetails() {
     const capabilities = window._browserCapabilities;
     const recommendations = window._capabilityRecommendations || [];
 
+    window.clearVisualizationTransientState?.();
     const modal = document.createElement('div');
     modal.id = 'capability-modal';
     modal.className = 'modal-overlay ml-modal-overlay';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'capability-modal-title');
     modal.innerHTML = `
         <div class="modal-content ml-modal-content capability-modal-content">
             <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                <h2 style="margin: 0;"><i class="fas fa-microchip"></i> Browser Capabilities</h2>
-                <button class="btn btn-icon" onclick="closeCapabilityModal()">
+                <h2 id="capability-modal-title" style="margin: 0;"><i class="fas fa-microchip" aria-hidden="true"></i> Browser Capabilities</h2>
+                <button class="btn btn-icon" onclick="closeCapabilityModal()" aria-label="Close browser capabilities">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
@@ -425,10 +433,10 @@ function showCapabilityDetails() {
                 <div class="capability-recommendations">
                     <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem;">Recommendations</h3>
                     ${recommendations.map(r => `
-                        <div class="recommendation-item recommendation-${r.type}">
-                            <strong>${r.title}</strong>
-                            <p style="margin: 0.25rem 0;">${r.message}</p>
-                            <small style="color: var(--text-muted);">${r.action}</small>
+                        <div class="recommendation-item recommendation-${['error', 'warning', 'info'].includes(r.type) ? r.type : 'info'}">
+                            <strong>${escapeCapabilityHTML(r.title)}</strong>
+                            <p style="margin: 0.25rem 0;">${escapeCapabilityHTML(r.message)}</p>
+                            <small style="color: var(--text-muted);">${escapeCapabilityHTML(r.action)}</small>
                         </div>
                     `).join('')}
                 </div>
@@ -464,11 +472,11 @@ function showCapabilityDetails() {
 function buildCapabilityRow(label, supported, detail) {
     return `
         <div class="capability-row">
-            <span class="capability-label">${label}</span>
+            <span class="capability-label">${escapeCapabilityHTML(label)}</span>
             <span class="capability-status ${supported ? 'status-ok' : 'status-warning'}">
                 ${supported ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-exclamation-circle"></i>'}
             </span>
-            <span class="capability-detail">${detail || ''}</span>
+            <span class="capability-detail">${escapeCapabilityHTML(detail || '')}</span>
         </div>
     `;
 }
@@ -507,9 +515,7 @@ async function initCapabilityCheck() {
         showCapabilityWarning(capabilities);
     }
 
-    // Log summary
-    if (capabilities.isFullySupported) {
-    } else {
+    if (!capabilities.isFullySupported) {
         console.warn('Some browser capabilities are limited:',
             BrowserCapabilities.getRecommendations(capabilities).map(r => r.title).join(', '));
     }

@@ -7,29 +7,38 @@ export function registerMetadataTools(server, bridge) {
     {},
     async () => {
       const result = await bridge.call('GET /metadata_schema', {}, 10000);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        ...(result?.error ? { isError: true } : {})
+      };
     }
   );
 
   server.tool(
     'set_metadata_filters',
-    'Apply metadata filters to scope all subsequent searches. Filters persist until cleared. Example: {"category": "news"} or {"year": {"min": 2020, "max": 2024}}.',
+    'Apply persistent metadata filters to all subsequent filter-aware MCP tools. Inline filters override the same fields for one call. Filters reset when the dataset changes or when cleared. Example: {"category": "news"} or {"year": {"min": 2020, "max": 2024}}.',
     {
       filters: z.record(z.any()).describe('Key-value metadata filters')
     },
     async (params) => {
       const result = await bridge.call('POST /api/set-metadata-filters', { filters: params.filters }, 10000);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        ...(result?.error ? { isError: true } : {})
+      };
     }
   );
 
   server.tool(
     'clear_metadata_filters',
-    'Remove all active metadata filters so searches return results from the full dataset.',
+    'Remove all persistent MCP metadata filters so filter-aware tools use the full dataset unless they receive inline filters.',
     {},
     async () => {
       const result = await bridge.call('POST /api/set-metadata-filters', { filters: {} }, 10000);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        ...(result?.error ? { isError: true } : {})
+      };
     }
   );
 }
