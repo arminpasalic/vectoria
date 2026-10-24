@@ -688,6 +688,9 @@ export function getConfigValue(path, defaultValue = undefined) {
  */
 export function setConfigValue(path, value) {
     const parts = path.split('.');
+    if (parts.some(part => part === '__proto__' || part === 'constructor' || part === 'prototype')) {
+        throw new Error(`Refusing unsafe config path: ${path}`);
+    }
     const updates = {};
     let current = updates;
 

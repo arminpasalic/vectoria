@@ -6537,7 +6537,11 @@ function addRestrictionIndicators() {
         if (!group || Array.from(group.children).some(child => child.classList?.contains(className))) return;
         const indicator = document.createElement('div');
         indicator.className = className;
-        indicator.innerHTML = `<i class="fas ${icon}" aria-hidden="true"></i> ${message}`;
+        // message can include a heading's textContent, so it must stay text.
+        const iconEl = document.createElement('i');
+        iconEl.className = `fas ${icon}`;
+        iconEl.setAttribute('aria-hidden', 'true');
+        indicator.append(iconEl, ` ${message}`);
         const heading = group.querySelector(':scope > h4');
         if (heading) heading.insertAdjacentElement('afterend', indicator);
         else group.prepend(indicator);

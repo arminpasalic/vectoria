@@ -2143,7 +2143,8 @@ async function browserMLFetchHandler(url, options = {}) {
             }
         } catch (error) {
             console.error(`API handler error for ${urlPath}:`, error);
-            return new Response(JSON.stringify({ error: error.message, stack: error.stack }), {
+            // The stack is already logged above; keep it out of the response body.
+            return new Response(JSON.stringify({ error: error.message }), {
                 status: 500,
                 headers: { 'Content-Type': 'application/json' }
             });

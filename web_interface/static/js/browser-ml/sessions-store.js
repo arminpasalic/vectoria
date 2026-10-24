@@ -45,7 +45,7 @@ export class SessionsStore {
         };
 
         const sha256 = await hashCanonical(payload);
-        const session_id = `sess_${payload.timestamp}_${Math.random().toString(36).slice(2, 8)}`;
+        const session_id = `sess_${payload.timestamp}_${randomSuffix()}`;
         const record = { id: session_id, name: payload.name, saved_at: payload.saved_at, sha256, dataset_id, payload };
         this.pipeline.analysisSessions.push(record);
 
@@ -160,6 +160,13 @@ export class SessionsStore {
         // arr is the list() output; we keep stub records (no payload) for visibility.
         this.pipeline.analysisSessions = arr.map(r => ({ ...r, payload: r.payload || null }));
     }
+}
+
+// getRandomValues works in insecure contexts too (unlike crypto.subtle).
+function randomSuffix() {
+    const bytes = new Uint8Array(4);
+    globalThis.crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(36).padStart(2, '0')).join('').slice(0, 6);
 }
 
 export async function hashCanonical(obj) {
