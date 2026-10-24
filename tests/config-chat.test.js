@@ -129,11 +129,37 @@ test('v7 custom routing and conversation prompt survive migration for downgrade 
     assert.equal(migrated.chat_prompts.conversation_system_prompt, 'Keep my custom legacy prompt');
 });
 
-test('defaults recommend Llama 3.2 3B for new setups with a workable window', () => {
-    assert.equal(DEFAULT_CONFIG.llm.model_id, 'Llama-3.2-3B-Instruct-q4f16_1-MLC');
+test('defaults recommend Gemma 4 E2B for new setups with a workable window', () => {
+    assert.equal(DEFAULT_CONFIG.llm.model_id, 'gemma-4-E2B-it-q4f16_1-MLC');
     assert.equal(DEFAULT_CONFIG.llm.context_window_size, 4096);
     assert.equal(DEFAULT_CONFIG.llm.top_p, 0.8);
     assert.equal(DEFAULT_CONFIG.llm.repeat_penalty, 1.1);
+});
+
+test('the Gemma 4 default reaches new installs only', () => {
+    // Brand-new install: defaults, persisted so later setup markers cannot
+    // make it look like an existing one.
+    values.clear();
+    assert.equal(getConfig().llm.model_id, 'gemma-4-E2B-it-q4f16_1-MLC');
+    assert.equal(JSON.parse(values.get('vectoria_config')).llm.model_id, 'gemma-4-E2B-it-q4f16_1-MLC');
+    values.set('vectoria_models_cached', 'true');
+    assert.equal(getConfig().llm.model_id, 'gemma-4-E2B-it-q4f16_1-MLC');
+
+    // Existing install that downloaded models but never saved a setting keeps
+    // the model it already has instead of starting a new download.
+    for (const marker of ['vectoria_models_ready', 'vectoria_models_cached']) {
+        values.clear();
+        values.set(marker, 'true');
+        assert.equal(getConfig().llm.model_id, 'Llama-3.2-3B-Instruct-q4f16_1-MLC', marker);
+        values.delete(marker);
+        assert.equal(getConfig().llm.model_id, 'Llama-3.2-3B-Instruct-q4f16_1-MLC', `${marker} pin persists`);
+    }
+
+    // A saved v19 config on the previous default is not migrated.
+    values.clear();
+    values.set('vectoria_config', JSON.stringify({ version: 19, llm: { model_id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC' } }));
+    assert.equal(getConfig().llm.model_id, 'Llama-3.2-3B-Instruct-q4f16_1-MLC');
+    values.clear();
 });
 
 test('v17 migration upgrades only the previous sampling defaults', () => {
@@ -172,7 +198,7 @@ test('legacy migrations preserve deliberate model selections while adopting the 
         version: 10,
         llm: { model_id: 'Ministral-3-3B-Instruct-2512-BF16-q4f16_1-MLC' }
     }));
-    assert.equal(getConfig().llm.model_id, 'Llama-3.2-3B-Instruct-q4f16_1-MLC');
+    assert.equal(getConfig().llm.model_id, DEFAULT_CONFIG.llm.model_id);
     assert.equal(getConfig().version, 19);
 
     values.set('vectoria_config', JSON.stringify({
@@ -225,7 +251,7 @@ test('v18 moves the previous default model across but never a chosen one', () =>
     }));
     const migrated = getConfig();
     assert.equal(migrated.version, 19);
-    assert.equal(migrated.llm.model_id, 'Llama-3.2-3B-Instruct-q4f16_1-MLC');
+    assert.equal(migrated.llm.model_id, DEFAULT_CONFIG.llm.model_id);
 
     for (const chosen of ['Qwen3-8B-q4f16_1-MLC', 'gemma3-1b-it-q4f16_1-MLC', 'Hermes-3-Llama-3.2-3B-q4f16_1-MLC']) {
         values.set('vectoria_config', JSON.stringify({ version: 17, llm: { model_id: chosen } }));

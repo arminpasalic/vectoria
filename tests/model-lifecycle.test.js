@@ -6,6 +6,7 @@ const pipeline = await readFile(new URL('../web_interface/static/js/browser-ml/i
 const embeddings = await readFile(new URL('../web_interface/static/js/browser-ml/embeddings.js', import.meta.url), 'utf8');
 const rag = await readFile(new URL('../web_interface/static/js/browser-ml/llm-rag.js', import.meta.url), 'utf8');
 const integration = await readFile(new URL('../web_interface/static/js/browser-integration.js', import.meta.url), 'utf8');
+const llmWorker = await readFile(new URL('../web_interface/static/js/browser-ml/llm-worker.js', import.meta.url), 'utf8');
 const index = await readFile(new URL('../web_interface/index.html', import.meta.url), 'utf8');
 const mainCss = await readFile(new URL('../web_interface/static/css/main.css', import.meta.url), 'utf8');
 const catalogModule = await import('../web_interface/static/js/model-constraints.js?catalog-lifecycle');
@@ -95,16 +96,37 @@ test('model catalog only references ids that exist in the pinned web-llm build',
 test('download sizes use audited bytes and never infer bytes from shard count', () => {
     const model = catalogModule.MODEL_CONSTRAINTS['Llama-3.2-3B-Instruct-q4f16_1-MLC'];
     assert.equal(model.weightBytes, 1807423488);
-    assert.equal(model.downloadBytes, 1822644325);
+    assert.equal(model.downloadBytes, 1823433462);
     assert.equal(catalogModule.formatDecimalBytes(model.downloadBytes), '1.82 GB');
     assert.equal(model.vramRequiredMB4K, 2263.69);
     assert.notEqual(model.downloadBytes, 58 * 100 * 1024 * 1024);
     assert.doesNotMatch(integration, /100\s*\*\s*1024\s*\*\s*1024[\s\S]{0,120}llm/i);
     assert.doesNotMatch(integration, /vectoria_model_download_sizes|__webllmRealDownloadSizes/);
-    assert.deepEqual(catalogModule.getModelDownloadProgress(model.isDefault ? 'Llama-3.2-3B-Instruct-q4f16_1-MLC' : '', 1), {
+    assert.deepEqual(catalogModule.getModelDownloadProgress('Llama-3.2-3B-Instruct-q4f16_1-MLC', 1), {
         loaded: model.downloadBytes,
         total: model.downloadBytes
     });
+});
+
+test('main thread and worker pin the same web-llm build', () => {
+    const version = source => source.match(/@mlc-ai\/web-llm@(\d+\.\d+\.\d+)\//)?.[1];
+    assert.ok(version(rag), 'llm-rag.js must pin an exact web-llm version');
+    assert.equal(version(llmWorker), version(rag), 'llm-worker.js and llm-rag.js must load the same web-llm build');
+});
+
+test('Gemma 4 E2B is the f16 default within its 4K library', () => {
+    const model = catalogModule.MODEL_CONSTRAINTS['gemma-4-E2B-it-q4f16_1-MLC'];
+    assert.ok(model, 'Gemma 4 E2B must be in the catalog');
+    assert.equal(catalogModule.MODEL_CONSTRAINTS['gemma-4-E2B-it-q4f32_1-MLC'], undefined);
+    assert.equal(model.catalogGroup, 'recommended');
+    assert.equal(model.responseMode, 'direct');
+    assert.equal(model.ragTier, 'recommended');
+    assert.equal(model.contextWindow, 4096);
+    assert.equal(model.maxTokens[1], 4096);
+    assert.equal(model.systemPromptSupport, true);
+    assert.equal(model.isDefault, true);
+    assert.deepEqual(Object.entries(catalogModule.MODEL_CONSTRAINTS).filter(([, m]) => m.isDefault).map(([id]) => id), ['gemma-4-E2B-it-q4f16_1-MLC']);
+    assert.equal(model.vramRequiredMB4K, 3387.37);
 });
 
 test('no-thinking soft switch is only claimed where the vendor documents it', async () => {

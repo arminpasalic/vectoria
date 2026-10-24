@@ -206,6 +206,9 @@ const PREVIOUS_V8_DEFAULT_LLM_ID = 'gemma-2-2b-it-q4f16_1-MLC';
 // Default before v11. Migrate only this value; all other model choices remain deliberate.
 // Also the default from v11 through v17, so the v18 migration reuses it.
 const PREVIOUS_V10_DEFAULT_LLM_ID = 'Ministral-3-3B-Instruct-2512-BF16-q4f16_1-MLC';
+// Default from v18 through v19. Deliberately NOT migrated: users who already
+// downloaded it keep it. See initialConfig().
+const PREVIOUS_V19_DEFAULT_LLM_ID = 'Llama-3.2-3B-Instruct-q4f16_1-MLC';
 
 // Complete default configuration
 export const DEFAULT_CONFIG = {
@@ -213,7 +216,7 @@ export const DEFAULT_CONFIG = {
 
     // LLM / Language Model Settings
     llm: {
-        model_id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
+        model_id: 'gemma-4-E2B-it-q4f16_1-MLC',
         reasoning_mode: 'direct',
         temperature: 0.3,
         max_tokens: 768,
@@ -471,8 +474,8 @@ export function getConfig() {
                     merged.hyde.prompt = DEFAULT_HYDE_PROMPT;
                 }
                 if (parsedVersion < 18 && merged.llm?.model_id === PREVIOUS_V10_DEFAULT_LLM_ID) {
-                    // v18: default moved to Llama 3.2 3B. Only users still on the
-                    // previous default move across; a chosen model stays put.
+                    // v18: users still on the v11-v17 default move to the current
+                    // default; a chosen model stays put.
                     merged.llm.model_id = DEFAULT_CONFIG.llm.model_id;
                 }
                 if (parsedVersion < 19 && merged.llm) {
@@ -491,12 +494,33 @@ export function getConfig() {
 
             return merged;
         }
+
+        return initialConfig();
     } catch (error) {
         console.error('❌ Error loading config from localStorage:', error);
     }
 
-    // Return defaults if no stored config or error
+    // Return defaults if storage failed
     return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+}
+
+/**
+ * First read with no stored config. An install that never changed a setting
+ * has no saved model_id, so a new default would silently switch its model and
+ * start a fresh download. If models were already downloaded, pin the model
+ * that was the default then. Persisting here also stops a new install from
+ * looking like an old one once setup marks its models as cached.
+ */
+function initialConfig() {
+    const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+    let hasDownloadedModels = false;
+    try {
+        hasDownloadedModels = localStorage.getItem('vectoria_models_ready') === 'true'
+            || localStorage.getItem('vectoria_models_cached') === 'true';
+    } catch (_) { /* storage unavailable: treat as a new install */ }
+    if (hasDownloadedModels) config.llm.model_id = PREVIOUS_V19_DEFAULT_LLM_ID;
+    saveConfig(config);
+    return config;
 }
 
 /**
