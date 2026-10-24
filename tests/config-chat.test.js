@@ -10,7 +10,7 @@ globalThis.localStorage = {
 };
 globalThis.window = {};
 
-const { DEFAULT_CONFIG, getConfig } = await import('../web_interface/static/js/config-manager.js?chat-tests');
+const { DEFAULT_CONFIG, getConfig, setConfigValue } = await import('../web_interface/static/js/config-manager.js?chat-tests');
 const previousDefault = 'You are a helpful assistant answering questions based on provided documents.\nUse [Doc N] to cite sources. If information is missing, say so. Keep answers clear and focused.';
 const previousV6Default = `You are Vectoria, a careful document-grounded research assistant.
 
@@ -421,4 +421,14 @@ test('v18 migration drops the trailing answer cue from either shipped user templ
         rag_prompts: { user_template: 'My own {question} / {context} layout' }
     }));
     assert.equal(getConfig().rag_prompts.user_template, 'My own {question} / {context} layout');
+});
+
+test('setConfigValue refuses prototype-polluting paths', () => {
+    for (const path of ['__proto__.polluted', 'llm.constructor.prototype.polluted', 'prototype']) {
+        assert.throws(() => setConfigValue(path, true), /unsafe config path/);
+    }
+    assert.equal({}.polluted, undefined);
+    setConfigValue('llm.temperature', 0.42);
+    assert.equal(getConfig().llm.temperature, 0.42);
+    values.clear();
 });
