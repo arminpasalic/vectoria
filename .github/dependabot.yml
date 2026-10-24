@@ -18,6 +18,17 @@ updates:
           - minor
           - patch
 
+  # Generated copy of /mcp-server (scripts/build-mcp.js). Updates land in
+  # /mcp-server and are mirrored by `npm run build`, so ignore everything here.
+  # Listing the directory is required: unlisted manifests still get security PRs.
+  - package-ecosystem: npm
+    directory: /web_interface/static/mcp-server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
