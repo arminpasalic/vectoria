@@ -1,10 +1,15 @@
 /**
  * Authoritative Vectoria catalog for text-only, post-trained instruction models.
  *
- * Model IDs and vramRequiredMB4K come from @mlc-ai/web-llm 0.2.84's
- * prebuiltAppConfig. weightBytes and downloadBytes were audited on 2026-08-27
- * from each Hugging Face tensor/tokenizer manifest plus the exact v0_2_84
- * WebGPU WASM Content-Length. Download bytes and runtime VRAM are deliberately
+ * Model IDs and vramRequiredMB4K come from @mlc-ai/web-llm 0.2.86's
+ * prebuiltAppConfig. weightBytes and downloadBytes were audited on 2026-10-24
+ * from each Hugging Face tensor/tokenizer manifest plus the exact v0_2_86
+ * WebGPU WASM Content-Length:
+ *   weightBytes   = sum of tensor-cache.json records[].nbytes
+ *   downloadBytes = weightBytes + tokenizer_files + mlc-chat-config.json
+ *                   + tensor-cache.json + WASM (+ mlc-model-manifest.json
+ *                   for records that declare model_manifest)
+ * Download bytes and runtime VRAM are deliberately
  * separate: they describe different resources and must never share a UI label.
  */
 
@@ -13,37 +18,45 @@ const MODEL_CONSTRAINTS = {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 131072,
         description: 'Llama 3.2 3B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'recommended', responseMode: 'direct', isDefault: true,
-        weightBytes: 1807423488, downloadBytes: 1822644325, vramRequiredMB4K: 2263.69
+        weightBytes: 1807423488, downloadBytes: 1823433462, vramRequiredMB4K: 2263.69
     },
     'Ministral-3-3B-Instruct-2512-BF16-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 262144,
         description: 'Ministral 3 3B Instruct', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'recommended', responseMode: 'direct',
-        weightBytes: 1929050112, downloadBytes: 1951697417, vramRequiredMB4K: 2863.69
+        weightBytes: 1929050112, downloadBytes: 1952507856, vramRequiredMB4K: 2863.69
     },
     'SmolLM2-1.7B-Instruct-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 8192,
         description: 'SmolLM2 1.7B Instruct', recommendedTemp: 0.3, recommendedMaxTokens: 512,
         catalogGroup: 'recommended', responseMode: 'direct',
-        weightBytes: 962793472, downloadBytes: 971950796, vramRequiredMB4K: 1774.19
+        weightBytes: 962793472, downloadBytes: 972732290, vramRequiredMB4K: 1774.19
     },
     'gemma3-1b-it-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 8192,
         description: 'Gemma 3 1B', recommendedTemp: 0.3, recommendedMaxTokens: 512,
         catalogGroup: 'recommended', responseMode: 'direct',
-        weightBytes: 562628864, downloadBytes: 607652373, vramRequiredMB4K: 711.07
+        weightBytes: 562628864, downloadBytes: 608381896, vramRequiredMB4K: 711.07
     },
     'Phi-4-mini-instruct-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 131072,
         description: 'Phi 4 Mini Instruct', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'recommended', responseMode: 'direct',
-        weightBytes: 2158049280, downloadBytes: 2185443060, vramRequiredMB4K: 3437.58
+        weightBytes: 2158049280, downloadBytes: 2186266257, vramRequiredMB4K: 3437.58
     },
     'Llama-3.1-8B-Instruct-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 131072,
         description: 'Llama 3.1 8B Instruct', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'direct', responseMode: 'direct',
-        weightBytes: 4517404672, downloadBytes: 4532810198, vramRequiredMB4K: 5001
+        weightBytes: 4517404672, downloadBytes: 4533589569, vramRequiredMB4K: 5001
+    },
+    // Text and audio input upstream; Vectoria only sends text. The prebuilt
+    // library is compiled for a 4K context.
+    'gemma-4-E2B-it-q4f16_1-MLC': {
+        temp: [0, 2], maxTokens: [1, 4096], contextWindow: 4096,
+        description: 'Gemma 4 E2B', recommendedTemp: 0.3, recommendedMaxTokens: 512,
+        catalogGroup: 'direct', responseMode: 'direct',
+        weightBytes: 2797577798, downloadBytes: 2842199512, vramRequiredMB4K: 3387.37
     },
 
     // Qwen3 is post-trained for instruction following. Vectoria can select its
@@ -53,104 +66,104 @@ const MODEL_CONSTRAINTS = {
         description: 'Qwen3 0.6B', recommendedTemp: 0.3, recommendedMaxTokens: 512,
         catalogGroup: 'switchable', responseMode: 'switchable', hasThinkMode: true,
         thinkSwitch: '/think', noThinkSwitch: '/no_think',
-        weightBytes: 335372288, downloadBytes: 356920759, vramRequiredMB4K: 1403.34
+        weightBytes: 335372288, downloadBytes: 357743575, vramRequiredMB4K: 1403.34
     },
     'Qwen3-1.7B-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 40960,
         description: 'Qwen3 1.7B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'switchable', responseMode: 'switchable', hasThinkMode: true,
         thinkSwitch: '/think', noThinkSwitch: '/no_think',
-        weightBytes: 968001536, downloadBytes: 989585515, vramRequiredMB4K: 2036.66
+        weightBytes: 968001536, downloadBytes: 990405840, vramRequiredMB4K: 2036.66
     },
     'Qwen3-4B-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 40960,
         description: 'Qwen3 4B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'switchable', responseMode: 'switchable', hasThinkMode: true,
         thinkSwitch: '/think', noThinkSwitch: '/no_think',
-        weightBytes: 2262920192, downloadBytes: 2284830783, vramRequiredMB4K: 3431.59
+        weightBytes: 2262920192, downloadBytes: 2285650882, vramRequiredMB4K: 3431.59
     },
     'Qwen3-8B-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 40960,
         description: 'Qwen3 8B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'switchable', responseMode: 'switchable', hasThinkMode: true,
         thinkSwitch: '/think', noThinkSwitch: '/no_think',
-        weightBytes: 4607731712, downloadBytes: 4629660679, vramRequiredMB4K: 5695.78
+        weightBytes: 4607731712, downloadBytes: 4630473823, vramRequiredMB4K: 5695.78
     },
 
-    // Qwen3.5's hard enable_thinking flag is not exposed by WebLLM 0.2.84's
+    // Qwen3.5's hard enable_thinking flag is not exposed by WebLLM 0.2.86's
     // chat-template route, so these are honestly presented as reasoning models.
     'Qwen3.5-0.8B-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 262144,
         description: 'Qwen3.5 0.8B', recommendedTemp: 0.3, recommendedMaxTokens: 512,
         catalogGroup: 'reasoning', responseMode: 'reasoning', hasThinkMode: true,
-        weightBytes: 423937664, downloadBytes: 453205372, vramRequiredMB4K: 1629.49
+        weightBytes: 423937664, downloadBytes: 454167100, vramRequiredMB4K: 1629.49
     },
     'Qwen3.5-2B-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 262144,
         description: 'Qwen3.5 2B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'reasoning', responseMode: 'reasoning', hasThinkMode: true,
-        weightBytes: 1059315328, downloadBytes: 1088608248, vramRequiredMB4K: 2245.44
+        weightBytes: 1059315328, downloadBytes: 1089566890, vramRequiredMB4K: 2245.44
     },
     'Qwen3.5-4B-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 262144,
         description: 'Qwen3.5 4B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'reasoning', responseMode: 'reasoning', hasThinkMode: true,
-        weightBytes: 2367117312, downloadBytes: 2396760278, vramRequiredMB4K: 3867.82
+        weightBytes: 2367117312, downloadBytes: 2397724506, vramRequiredMB4K: 3867.82
     },
     'Qwen3.5-9B-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 262144,
         description: 'Qwen3.5 9B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'reasoning', responseMode: 'reasoning', hasThinkMode: true,
-        weightBytes: 5038040064, downloadBytes: 5067721004, vramRequiredMB4K: 6433.01
+        weightBytes: 5038040064, downloadBytes: 5068681083, vramRequiredMB4K: 6433.01
     },
     'Ministral-3-3B-Reasoning-2512-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 262144,
         description: 'Ministral 3 3B Reasoning', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'reasoning', responseMode: 'reasoning', hasThinkMode: true,
-        weightBytes: 1929050112, downloadBytes: 1951695552, vramRequiredMB4K: 2863.69
+        weightBytes: 1929050112, downloadBytes: 1952505991, vramRequiredMB4K: 2863.69
     },
     'DeepSeek-R1-Distill-Llama-8B-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 131072,
         description: 'DeepSeek R1 Llama 8B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'reasoning', responseMode: 'reasoning', hasThinkMode: true,
-        weightBytes: 4517404672, downloadBytes: 4532762359, vramRequiredMB4K: 5001
+        weightBytes: 4517404672, downloadBytes: 4533541730, vramRequiredMB4K: 5001
     },
 
     'Hermes-3-Llama-3.2-3B-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 131072,
         description: 'Hermes 3 Llama 3.2 3B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'advanced', responseMode: 'direct',
-        weightBytes: 1807423488, downloadBytes: 1822639792, vramRequiredMB4K: 2263.69
+        weightBytes: 1807423488, downloadBytes: 1823428929, vramRequiredMB4K: 2263.69
     },
     'Hermes-3-Llama-3.1-8B-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 131072,
         description: 'Hermes 3 Llama 3.1 8B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'advanced', responseMode: 'direct',
-        weightBytes: 4517404672, downloadBytes: 4532816009, vramRequiredMB4K: 4876.13
+        weightBytes: 4517404672, downloadBytes: 4533595380, vramRequiredMB4K: 4876.13
     },
     'OLMo-2-0425-1B-Instruct-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 4096], contextWindow: 4096,
         description: 'OLMo 2 1B Instruct', recommendedTemp: 0.3, recommendedMaxTokens: 512,
         catalogGroup: 'advanced', responseMode: 'direct',
-        weightBytes: 835457024, downloadBytes: 851049399, vramRequiredMB4K: 1776.75
+        weightBytes: 835457024, downloadBytes: 851893877, vramRequiredMB4K: 1776.75
     },
     'OLMo-2-1124-7B-Instruct-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 4096], contextWindow: 4096,
         description: 'OLMo 2 7B Instruct', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'advanced', responseMode: 'direct',
-        weightBytes: 4106231808, downloadBytes: 4123027890, vramRequiredMB4K: 6479.01
+        weightBytes: 4106231808, downloadBytes: 4123854627, vramRequiredMB4K: 6479.01
     },
     'gemma-2-2b-it-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 4096], contextWindow: 4096,
         description: 'Gemma 2 2B', recommendedTemp: 0.3, recommendedMaxTokens: 512,
         catalogGroup: 'legacy', responseMode: 'direct', systemPromptSupport: false,
-        weightBytes: 1470915072, downloadBytes: 1498056313, vramRequiredMB4K: 1895.3
+        weightBytes: 1470915072, downloadBytes: 1498800047, vramRequiredMB4K: 1895.3
     },
     'gemma-2-9b-it-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 4096], contextWindow: 4096,
         description: 'Gemma 2 9B', recommendedTemp: 0.3, recommendedMaxTokens: 512,
         catalogGroup: 'legacy', responseMode: 'direct', systemPromptSupport: false,
-        weightBytes: 5199330304, downloadBytes: 5227099239, vramRequiredMB4K: 6422.01
+        weightBytes: 5199330304, downloadBytes: 5227878371, vramRequiredMB4K: 6422.01
     },
     default: {
         temp: [0, 2], maxTokens: [1, 4096], contextWindow: 4096,
@@ -168,7 +181,7 @@ const QUALITY_RAG_MODELS = new Set([
 const LIMITED_RAG_MODELS = new Set([
     'Qwen3-0.6B-q4f16_1-MLC', 'Qwen3-1.7B-q4f16_1-MLC',
     'Qwen3.5-0.8B-q4f16_1-MLC', 'Qwen3.5-2B-q4f16_1-MLC',
-    'gemma3-1b-it-q4f16_1-MLC', 'gemma-2-2b-it-q4f16_1-MLC',
+    'gemma3-1b-it-q4f16_1-MLC', 'gemma-2-2b-it-q4f16_1-MLC', 'gemma-4-E2B-it-q4f16_1-MLC',
     'OLMo-2-0425-1B-Instruct-q4f16_1-MLC', 'SmolLM2-1.7B-Instruct-q4f16_1-MLC'
 ]);
 

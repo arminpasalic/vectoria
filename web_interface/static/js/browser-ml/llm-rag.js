@@ -3,7 +3,7 @@
  * Runs the configured language model locally in the browser via WebGPU.
  */
 
-import { CreateWebWorkerMLCEngine, hasModelInCache, prebuiltAppConfig } from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm";
+import { CreateWebWorkerMLCEngine, hasModelInCache, prebuiltAppConfig } from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.86/+esm";
 import { getModelConstraints } from "../model-constraints.js";
 // Defaults are owned by config-manager.js. Never re-declare them here: this
 // file previously kept its own copies, which silently drifted out of sync.
