@@ -102,7 +102,7 @@ test('download sizes use audited bytes and never infer bytes from shard count', 
     assert.notEqual(model.downloadBytes, 58 * 100 * 1024 * 1024);
     assert.doesNotMatch(integration, /100\s*\*\s*1024\s*\*\s*1024[\s\S]{0,120}llm/i);
     assert.doesNotMatch(integration, /vectoria_model_download_sizes|__webllmRealDownloadSizes/);
-    assert.deepEqual(catalogModule.getModelDownloadProgress(model.isDefault ? 'Llama-3.2-3B-Instruct-q4f16_1-MLC' : '', 1), {
+    assert.deepEqual(catalogModule.getModelDownloadProgress('Llama-3.2-3B-Instruct-q4f16_1-MLC', 1), {
         loaded: model.downloadBytes,
         total: model.downloadBytes
     });
@@ -114,17 +114,18 @@ test('main thread and worker pin the same web-llm build', () => {
     assert.equal(version(llmWorker), version(rag), 'llm-worker.js and llm-rag.js must load the same web-llm build');
 });
 
-test('Gemma 4 E2B is offered as an f16 direct model within its 4K library', () => {
+test('Gemma 4 E2B is the f16 default within its 4K library', () => {
     const model = catalogModule.MODEL_CONSTRAINTS['gemma-4-E2B-it-q4f16_1-MLC'];
     assert.ok(model, 'Gemma 4 E2B must be in the catalog');
     assert.equal(catalogModule.MODEL_CONSTRAINTS['gemma-4-E2B-it-q4f32_1-MLC'], undefined);
-    assert.equal(model.catalogGroup, 'direct');
+    assert.equal(model.catalogGroup, 'recommended');
     assert.equal(model.responseMode, 'direct');
-    assert.equal(model.ragTier, 'limited');
+    assert.equal(model.ragTier, 'recommended');
     assert.equal(model.contextWindow, 4096);
     assert.equal(model.maxTokens[1], 4096);
     assert.equal(model.systemPromptSupport, true);
-    assert.equal(model.isDefault, undefined);
+    assert.equal(model.isDefault, true);
+    assert.deepEqual(Object.entries(catalogModule.MODEL_CONSTRAINTS).filter(([, m]) => m.isDefault).map(([id]) => id), ['gemma-4-E2B-it-q4f16_1-MLC']);
     assert.equal(model.vramRequiredMB4K, 3387.37);
 });
 

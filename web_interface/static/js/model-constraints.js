@@ -14,10 +14,18 @@
  */
 
 const MODEL_CONSTRAINTS = {
+    // Default. Text and audio input upstream; Vectoria only sends text. The
+    // prebuilt library is compiled for a 4K context.
+    'gemma-4-E2B-it-q4f16_1-MLC': {
+        temp: [0, 2], maxTokens: [1, 4096], contextWindow: 4096,
+        description: 'Gemma 4 E2B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
+        catalogGroup: 'recommended', responseMode: 'direct', isDefault: true,
+        weightBytes: 2797577798, downloadBytes: 2842199512, vramRequiredMB4K: 3387.37
+    },
     'Llama-3.2-3B-Instruct-q4f16_1-MLC': {
         temp: [0, 2], maxTokens: [1, 8192], contextWindow: 131072,
         description: 'Llama 3.2 3B', recommendedTemp: 0.3, recommendedMaxTokens: 768,
-        catalogGroup: 'recommended', responseMode: 'direct', isDefault: true,
+        catalogGroup: 'recommended', responseMode: 'direct',
         weightBytes: 1807423488, downloadBytes: 1823433462, vramRequiredMB4K: 2263.69
     },
     'Ministral-3-3B-Instruct-2512-BF16-q4f16_1-MLC': {
@@ -49,14 +57,6 @@ const MODEL_CONSTRAINTS = {
         description: 'Llama 3.1 8B Instruct', recommendedTemp: 0.3, recommendedMaxTokens: 768,
         catalogGroup: 'direct', responseMode: 'direct',
         weightBytes: 4517404672, downloadBytes: 4533589569, vramRequiredMB4K: 5001
-    },
-    // Text and audio input upstream; Vectoria only sends text. The prebuilt
-    // library is compiled for a 4K context.
-    'gemma-4-E2B-it-q4f16_1-MLC': {
-        temp: [0, 2], maxTokens: [1, 4096], contextWindow: 4096,
-        description: 'Gemma 4 E2B', recommendedTemp: 0.3, recommendedMaxTokens: 512,
-        catalogGroup: 'direct', responseMode: 'direct',
-        weightBytes: 2797577798, downloadBytes: 2842199512, vramRequiredMB4K: 3387.37
     },
 
     // Qwen3 is post-trained for instruction following. Vectoria can select its
@@ -181,7 +181,7 @@ const QUALITY_RAG_MODELS = new Set([
 const LIMITED_RAG_MODELS = new Set([
     'Qwen3-0.6B-q4f16_1-MLC', 'Qwen3-1.7B-q4f16_1-MLC',
     'Qwen3.5-0.8B-q4f16_1-MLC', 'Qwen3.5-2B-q4f16_1-MLC',
-    'gemma3-1b-it-q4f16_1-MLC', 'gemma-2-2b-it-q4f16_1-MLC', 'gemma-4-E2B-it-q4f16_1-MLC',
+    'gemma3-1b-it-q4f16_1-MLC', 'gemma-2-2b-it-q4f16_1-MLC',
     'OLMo-2-0425-1B-Instruct-q4f16_1-MLC', 'SmolLM2-1.7B-Instruct-q4f16_1-MLC'
 ]);
 
