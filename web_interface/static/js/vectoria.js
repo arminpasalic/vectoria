@@ -8708,8 +8708,11 @@ function initializeExportImportHandlers() {
                     );
                 }
 
-                const blob = await response.blob();
-                const file = new File([blob], 'sampledata.json', { type: 'application/json' });
+                // Read into memory, not response.blob(): Chromium may back a
+                // large fetched blob with disk, which fails with "Failed to
+                // fetch" once cached models have filled the storage quota.
+                const bytes = await response.arrayBuffer();
+                const file = new File([bytes], 'sampledata.json', { type: 'application/json' });
 
                 if (typeof importDataset !== 'function') {
                     throw new Error('Import function not available. Please refresh the page.');
