@@ -57,14 +57,14 @@
     <link rel="preconnect" href="https://esm.run" crossorigin>
     <link rel="dns-prefetch" href="https://huggingface.co">
 
-    <link rel="stylesheet" href="static/css/main.css?v=2026-10-24-21bf191">
-    <link rel="stylesheet" href="static/css/browser-ml.css?v=2026-10-24-21bf191">
-    <link rel="stylesheet" href="static/css/explore-workbench.css?v=2026-10-24-21bf191">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.5.4/papaparse.min.js" crossorigin="anonymous" defer></script>
+    <link rel="stylesheet" href="static/css/main.css?v=2026-10-24-a19c80e">
+    <link rel="stylesheet" href="static/css/browser-ml.css?v=2026-10-24-a19c80e">
+    <link rel="stylesheet" href="static/css/explore-workbench.css?v=2026-10-24-a19c80e">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" integrity="sha512-Evv84Mr4kqVGRNSgIGL/F/aIDqQb7xQ2vcrdIwxfjThSH8CSR7PBEakCr51Ck+w+/U6swU2Im1vVX0SVk9ABhg==" crossorigin="anonymous" referrerpolicy="no-referrer">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.5.4/papaparse.min.js" integrity="sha512-LJUUW+TCoh758mcCIOz5+PksCz2wNpWSfm579AbOKWDOroG5UD75lmlFCnhn5x5nIt40WeKzNeyZaZjRA31UPQ==" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
 
-    <link rel="icon" type="image/svg+xml" href="static/img/favicon.svg?v=2026-10-24-21bf191">
-    <link rel="apple-touch-icon" href="static/img/favicon.svg?v=2026-10-24-21bf191">
+    <link rel="icon" type="image/svg+xml" href="static/img/favicon.svg?v=2026-10-24-a19c80e">
+    <link rel="apple-touch-icon" href="static/img/favicon.svg?v=2026-10-24-a19c80e">
     <script>
       window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
     </script>
@@ -1725,26 +1725,26 @@
         
     </script>
 
-    <script type="module" src="static/js/config-manager.js?v=2026-10-24-21bf191"></script>
-    <script type="module" src="static/js/model-constraints.js?v=2026-10-24-21bf191"></script>
-    <script src="static/js/dom-safety.js?v=2026-10-24-21bf191"></script>
-    <script src="static/js/viz.js?v=2026-10-24-21bf191"></script>
-    <script src="static/js/webgl-renderer.js?v=2026-10-24-21bf191"></script>
-    <script src="static/js/hyde-handler.js?v=2026-10-24-21bf191"></script>
-    <script src="static/js/fast-search.js?v=2026-10-24-21bf191"></script>
+    <script type="module" src="static/js/config-manager.js?v=2026-10-24-a19c80e"></script>
+    <script type="module" src="static/js/model-constraints.js?v=2026-10-24-a19c80e"></script>
+    <script src="static/js/dom-safety.js?v=2026-10-24-a19c80e"></script>
+    <script src="static/js/viz.js?v=2026-10-24-a19c80e"></script>
+    <script src="static/js/webgl-renderer.js?v=2026-10-24-a19c80e"></script>
+    <script src="static/js/hyde-handler.js?v=2026-10-24-a19c80e"></script>
+    <script src="static/js/fast-search.js?v=2026-10-24-a19c80e"></script>
 
-    <script src="static/js/browser-capabilities.js?v=2026-10-24-21bf191"></script>
-    <script src="static/js/generation-mode-controller.js?v=2026-10-24-21bf191"></script>
+    <script src="static/js/browser-capabilities.js?v=2026-10-24-a19c80e"></script>
+    <script src="static/js/generation-mode-controller.js?v=2026-10-24-a19c80e"></script>
 
     <script type="module">
-        await import('./static/js/browser-integration.js?v=2026-10-24-21bf191');
+        await import('./static/js/browser-integration.js?v=2026-10-24-a19c80e');
     </script>
 
-    <script type="module" src="static/js/workspace-controller.js?v=2026-10-24-21bf191"></script>
-    <script type="module" src="static/js/chat-interface.js?v=2026-10-24-21bf191"></script>
+    <script type="module" src="static/js/workspace-controller.js?v=2026-10-24-a19c80e"></script>
+    <script type="module" src="static/js/chat-interface.js?v=2026-10-24-a19c80e"></script>
 
     <script type="module">
-        import { initializeBrowserML, prepareBrowserMLFromCache, setupDatasetSaveLoadHandlers, setupStopGenerationHandler } from './static/js/browser-integration.js?v=2026-10-24-21bf191';
+        import { initializeBrowserML, prepareBrowserMLFromCache, setupDatasetSaveLoadHandlers, setupStopGenerationHandler } from './static/js/browser-integration.js?v=2026-10-24-a19c80e';
 
         // Initialize on page load
         window.addEventListener('DOMContentLoaded', async () => {
@@ -1783,7 +1783,7 @@
                         refreshing = true;
                         window.location.reload();
                     });
-                    navigator.serviceWorker.register('/sw.js?v=2026-10-24-21bf191', { updateViaCache: 'none' })
+                    navigator.serviceWorker.register('/sw.js?v=2026-10-24-a19c80e', { updateViaCache: 'none' })
                         .then(registration => registration.update().catch(() => {}))
                         .catch(err => console.warn('⚠️ Service worker registration failed:', err));
                 }
@@ -2008,9 +2008,9 @@
         });
     </script>
 
-    <script src="static/js/export-import.js?v=2026-10-24-21bf191"></script>
+    <script src="static/js/export-import.js?v=2026-10-24-a19c80e"></script>
 
-    <script src="static/js/vectoria.js?v=2026-10-24-21bf191"></script>
+    <script src="static/js/vectoria.js?v=2026-10-24-a19c80e"></script>
 
     <script>
     // One controller owns persisted mode, globals, runtime transitions, and UI
@@ -2090,7 +2090,7 @@
             // SharedWorker can otherwise survive a deploy and keep executing
             // an older relay URL for the lifetime of the browser profile.
             try {
-                const workerUrl = '/static/js/mcp-bridge-worker.js?v=2026-10-24-21bf191';
+                const workerUrl = '/static/js/mcp-bridge-worker.js?v=2026-10-24-a19c80e';
                 const workerVersion = new URL(workerUrl, window.location.href).searchParams.get('v');
                 mcpWorker = new SharedWorker(workerUrl, {
                     name: `vectoria-mcp-${workerVersion}`

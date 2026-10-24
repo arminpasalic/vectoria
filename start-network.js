@@ -8,7 +8,7 @@
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import os from 'os';
 import { fileURLToPath } from 'url';
 
@@ -43,9 +43,11 @@ function generateCertificate() {
 
         console.log('🔐 Generating self-signed certificate...');
         const ip = getLocalIP();
-        const cmd = `openssl req -x509 -newkey rsa:2048 -keyout ${KEY_FILE} -out ${CERT_FILE} -days 365 -nodes -subj "/CN=${ip}"`;
+        // Arguments are passed directly, never through a shell.
+        const args = ['req', '-x509', '-newkey', 'rsa:2048', '-keyout', KEY_FILE, '-out', CERT_FILE,
+            '-days', '365', '-nodes', '-subj', `/CN=${ip}`];
 
-        exec(cmd, (error) => {
+        execFile('openssl', args, (error) => {
             if (error) {
                 reject(error);
             } else {
@@ -65,7 +67,6 @@ async function startServer() {
 
         // Use http-server for HTTPS support (better than serve for SSL)
         // Quote paths to handle spaces in directory names
-        const cmd = `npx http-server web_interface -p ${PORT} -S -C "${CERT_FILE}" -K "${KEY_FILE}" --cors`;
 
         console.log('\n🚀 Starting HTTPS server...\n');
         console.log(`📍 Local:   https://localhost:${PORT}`);
@@ -73,7 +74,7 @@ async function startServer() {
         console.log('\n⚠️  You\'ll see a certificate warning - click "Advanced" → "Proceed"\n');
         console.log('Press Ctrl+C to stop the server\n');
 
-        const server = exec(cmd);
+        const server = spawn('npx', ['http-server', 'web_interface', '-p', String(PORT), '-S', '-C', CERT_FILE, '-K', KEY_FILE, '--cors']);
 
         server.stdout.on('data', (data) => {
             console.log(data.toString());
